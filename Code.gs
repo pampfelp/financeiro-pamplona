@@ -15,12 +15,17 @@
  * ESCOPO — SÓ LEITURA: as 3 ações abaixo (connectToken, listAccounts,
  * listTransactions) só LEEM dados da Pluggy. Não existe, e não deve ser
  * adicionada, nenhuma ação que inicie pagamento, transferência, PIX ou
- * qualquer outra escrita que mexa em dinheiro de verdade. Também não há
- * (de propósito) um endpoint de webhook aqui — a sincronização é manual,
- * disparada pelo botão "🔄 Sincronizar agora" no app; um webhook exigiria
- * que este script escrevesse no Firestore autenticado com uma conta de
- * serviço (OAuth), o que é complexidade desnecessária pro que o sistema
- * precisa por enquanto.
+ * qualquer outra escrita que mexa em dinheiro de verdade.
+ *
+ * WEBHOOK: existe um recebedor mínimo (acaoWebhook_) só pra satisfazer a
+ * exigência da Pluggy de ter um endpoint registrado pra liberar acesso de
+ * produção (bancos reais). Ele só confirma o recebimento rapidinho — não
+ * processa nem grava nada, porque a sincronização deste app já acontece
+ * sozinha quando alguém abre a tela (mais o botão manual "Sincronizar
+ * agora"). Registre esta MESMA URL do "/exec" como webhook no painel da
+ * Pluggy, cobrindo os eventos: item/created, item/updated,
+ * transactions/created, transactions/updated, transactions/deleted (ou
+ * "all").
  *
  * COMO USAR:
  * 1. Crie uma planilha Google Sheets em branco, só para servir de "casa"
@@ -52,6 +57,10 @@ function doPost(e) {
 
 function rotear_(body) {
   try {
+    // Notificação de webhook da Pluggy vem com "event" (ex: "item/updated"),
+    // nunca com "action" — trata antes do switch pra não cair no "ação
+    // desconhecida" quando a Pluggy testar/disparar o webhook.
+    if (body.event) return acaoWebhook_(body);
     switch (body.action) {
       case "connectToken": return acaoConnectToken_();
       case "listAccounts": return acaoListAccounts_(body.itemId);
@@ -61,6 +70,14 @@ function rotear_(body) {
   } catch (err) {
     return { ok: false, erro: String(err) };
   }
+}
+
+// Recebedor mínimo de webhook — só confirma recebimento (a Pluggy exige
+// resposta 2XX em até 5s). De propósito não faz mais nada: nenhuma escrita
+// no Firestore, nenhum processamento de evento. Ver o comentário no topo
+// do arquivo pro porquê.
+function acaoWebhook_(body) {
+  return { received: true };
 }
 
 // ══════════════ AÇÕES (todas só-leitura) ══════════════

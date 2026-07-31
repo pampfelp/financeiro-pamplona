@@ -855,5 +855,17 @@
 -->
 <script type="module" src="firebase-init.js"></script>
 <script type="module" src="app.js"></script>
+<script>
+  // Registra o service worker — sem isso o navegador não considera o site
+  // "instalável" (ícone de instalar some do menu, e o Android não mostra o
+  // banner de "Adicionar à tela inicial" sozinho).
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch((err) => {
+        console.error("Falha ao registrar service worker:", err);
+      });
+    });
+  }
+</script>
 </body>
 </html>
