@@ -103,24 +103,26 @@ function acaoListAccounts_(itemId) {
   return { ok: true, accounts: dados.results || [] };
 }
 
-// Lista transações de uma conta num período — pagina automaticamente se a
-// Pluggy devolver mais de uma página (campo "page"/"totalPages"). Só
-// leitura — importar essas transações pro Firestore é feito pelo app.js,
-// nunca por este script.
+// Lista transações de uma conta num período usando /v2/transactions —
+// o endpoint antigo (/transactions, paginação por número de página) foi
+// descontinuado pela Pluggy em favor de paginação por cursor: cada resposta
+// devolve "next" (uma URL com um parâmetro "after") em vez de "totalPages";
+// a página seguinte é pedida repassando esse "after" até "next" vir null.
+// Só leitura — importar essas transações pro Firestore é feito pelo
+// app.js, nunca por este script.
 function acaoListTransactions_(accountId, from, to) {
   if (!accountId) return { ok: false, erro: "accountId é obrigatório." };
   var apiKey = obterApiKeyPluggy_();
   var todas = [];
-  var pagina = 1;
-  var totalPaginas = 1;
+  var after = null;
 
   do {
-    var url = PLUGGY_API_BASE + "/transactions"
+    var url = PLUGGY_API_BASE + "/v2/transactions"
       + "?accountId=" + encodeURIComponent(accountId)
       + "&pageSize=500"
-      + "&page=" + pagina
-      + (from ? "&from=" + encodeURIComponent(from) : "")
-      + (to ? "&to=" + encodeURIComponent(to) : "");
+      + (from ? "&dateFrom=" + encodeURIComponent(from) : "")
+      + (to ? "&dateTo=" + encodeURIComponent(to) : "")
+      + (after ? "&after=" + encodeURIComponent(after) : "");
     var resp = UrlFetchApp.fetch(url, {
       method: "get",
       headers: { "X-API-KEY": apiKey },
@@ -131,11 +133,18 @@ function acaoListTransactions_(accountId, from, to) {
       return { ok: false, erro: dados.message || "Falha ao listar transações." };
     }
     todas = todas.concat(dados.results || []);
-    totalPaginas = dados.totalPages || 1;
-    pagina++;
-  } while (pagina <= totalPaginas);
+    after = dados.next ? extrairParametroUrl_(dados.next, "after") : null;
+  } while (after);
 
   return { ok: true, transactions: todas };
+}
+
+// Apps Script não tem a API URL/URLSearchParams do navegador — extrai o
+// valor de um parâmetro de query string na mão (usado pra pegar o "after"
+// de dentro da URL "next" que a Pluggy devolve).
+function extrairParametroUrl_(url, nome) {
+  var m = new RegExp("[?&]" + nome + "=([^&]+)").exec(url);
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
 // ══════════════ AUTENTICAÇÃO COM A PLUGGY ══════════════
