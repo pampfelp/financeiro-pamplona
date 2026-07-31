@@ -1224,6 +1224,31 @@ async function garantirRegraCategorizacao(chave, lancamentoId, descricaoExemplo)
   }
 }
 
+// Procura uma movimentação PENDENTE (não paga, ainda não vinda do banco —
+// ou seja, lançada manualmente ou por um custo recorrente) do mesmo
+// lançamento, com data próxima da transação real (até 7 dias de diferença).
+// É o que evita duplicar: em vez de criar uma segunda linha quando o Pix da
+// conta de energia cai no banco, o sistema atualiza a que você já tinha
+// lançado. "pendentesConsumidos" evita casar duas transações novas com o
+// mesmo pendente na mesma sincronização.
+function encontrarPendenteParaConciliar(lancamentoId, dataTransacaoStr, pendentesConsumidos) {
+  const dataTransacao = parseDataLocal(dataTransacaoStr);
+  let melhor = null;
+  let menorDiferenca = 8; // dias — fora dessa janela não conta como conciliável
+  STATE.movimentacoes.forEach((m) => {
+    if (m.origem === "Open Finance") return;
+    if (m.pago === true) return;
+    if (m.lancamentoId !== lancamentoId) return;
+    if (pendentesConsumidos.has(m.id)) return;
+    const diferencaDias = Math.abs((parseDataLocal(m.data) - dataTransacao) / 86400000);
+    if (diferencaDias <= 7 && diferencaDias < menorDiferenca) {
+      melhor = m;
+      menorDiferenca = diferencaDias;
+    }
+  });
+  return melhor;
+}
+
 // Cria ou atualiza o registro do cartão em cartoesOpenFinance a partir dos
 // dados que a própria Pluggy devolve pra uma conta type "CREDIT" — é só
 // leitura/espelho do banco, por isso não tem os campos de dia de
@@ -1302,8 +1327,10 @@ async function sincronizarConexao(conexaoId) {
     const lancSaidaId = await garantirLancamentoImportado("Saida");
     const mapaRegras = {};
     STATE.regrasCategorizacaoOF.forEach((r) => (mapaRegras[r.chave] = r.lancamentoId));
+    const pendentesConsumidos = new Set();
 
     let qtdAutoCategorizadas = 0;
+    let qtdConciliadas = 0;
     const batch = writeBatch(db);
     novas.forEach((t) => {
       const valor = Number(t.amount) || 0;
@@ -1319,21 +1346,46 @@ async function sincronizarConexao(conexaoId) {
         valorTotalCompra: meta.totalAmount != null ? Number(meta.totalAmount) : null
       } : { parcelaAtual: null, parcelaTotal: null, valorTotalCompra: null };
 
-      const movRef = doc(collection(db, "movimentacoes"));
-      // Transação já aconteceu no extrato do banco, então entra como "paga"
-      // — é histórico, não uma previsão.
-      batch.set(movRef, {
-        lancamentoId, data: String(t.date || dataAte).slice(0, 10), valor: Math.abs(arredondar2(valor)), pago: true,
-        responsavel: "", origem: "Open Finance", cartaoId: null, compraParceladaId: null,
-        pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
-        contaTipo: t._contaTipo || "banco", revisado: !!lancamentoIdRegra, descricaoOrigem: t.description || t.descriptionRaw || "",
-        chaveCategorizador: chave, ...dadosParcela, createdAt: serverTimestamp()
-      });
+      const dataTransacao = String(t.date || dataAte).slice(0, 10);
+      const dadosOpenFinance = {
+        origem: "Open Finance", pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
+        contaTipo: t._contaTipo || "banco", revisado: true, descricaoOrigem: t.description || t.descriptionRaw || "",
+        chaveCategorizador: chave, ...dadosParcela
+      };
+
+      // Conciliação: só tenta quando já existe regra (sem regra não dá pra
+      // saber com qual lançamento comparar) — procura um lançamento
+      // pendente (não pago, não vindo do banco ainda) do MESMO lançamento,
+      // com data próxima (até 7 dias), e ATUALIZA ele em vez de criar outro.
+      // Não exige valor igual de propósito — contas como energia variam de
+      // mês a mês, mas o valor certo (do banco) substitui o estimado.
+      const pendente = lancamentoIdRegra
+        ? encontrarPendenteParaConciliar(lancamentoIdRegra, dataTransacao, pendentesConsumidos)
+        : null;
+
+      if (pendente) {
+        pendentesConsumidos.add(pendente.id);
+        qtdConciliadas++;
+        batch.update(doc(db, "movimentacoes", pendente.id), {
+          pago: true, data: dataTransacao, valor: Math.abs(arredondar2(valor)), ...dadosOpenFinance
+        });
+      } else {
+        const movRef = doc(collection(db, "movimentacoes"));
+        // Transação já aconteceu no extrato do banco, então entra como
+        // "paga" — é histórico, não uma previsão.
+        batch.set(movRef, {
+          lancamentoId, data: dataTransacao, valor: Math.abs(arredondar2(valor)), pago: true,
+          responsavel: "", cartaoId: null, compraParceladaId: null, ...dadosOpenFinance, createdAt: serverTimestamp()
+        });
+      }
     });
     batch.update(doc(db, "conexoesBancarias", conexaoId), { ultimaSincronizacao: serverTimestamp(), status: "conectado" });
     await batch.commit();
-    const sufixoRegra = qtdAutoCategorizadas ? ` (${qtdAutoCategorizadas} já categorizada(s) automaticamente por regra)` : "";
-    mostrarToast(`${novas.length} transação(ões) importada(s) de ${conexao.instituicao || "banco"}${sufixoRegra}. Recategorize em Movimentações se quiser.`);
+    const partesResumo = [];
+    if (qtdConciliadas) partesResumo.push(`${qtdConciliadas} conciliada(s) com lançamento(s) pendente(s)`);
+    if (qtdAutoCategorizadas - qtdConciliadas > 0) partesResumo.push(`${qtdAutoCategorizadas - qtdConciliadas} categorizada(s) automaticamente por regra`);
+    const sufixo = partesResumo.length ? ` (${partesResumo.join(", ")})` : "";
+    mostrarToast(`${novas.length} transação(ões) importada(s) de ${conexao.instituicao || "banco"}${sufixo}. Recategorize em Movimentações se quiser.`);
   } catch (err) {
     mostrarToast("Não foi possível sincronizar: " + err.message, true);
     try { await updateDoc(doc(db, "conexoesBancarias", conexaoId), { status: "erro" }); } catch (err2) { /* ignora falha secundária */ }
