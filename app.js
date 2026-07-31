@@ -318,22 +318,64 @@ function preencherCategorias() {
   document.getElementById("lista-categorias").innerHTML = categorias.map((c) => `<option value="${esc(c)}"></option>`).join("");
 }
 
+const CAMPOS_BUSCA_LANCAMENTO = [
+  "mov-lancamento", "rec-lancamento", "compra-lancamento", "edit-mov-lancamento", "edit-rec-lancamento", "edit-compra-lancamento",
+  "qa-mov-lancamento", "qa-compra-lancamento", "qa-rec-lancamento"
+];
+
+function rotuloLancamento(l) {
+  return `${l.nome} (${l.tipo === "Entrada" ? "Entrada" : "Saída"} — ${l.categoria})`;
+}
+
+// Cada campo "Lançamento" é, por baixo dos panos, um <input type="hidden">
+// com o MESMO id que o <select> antigo tinha — todo o resto do código
+// (leituras de .value, validações) continua funcionando sem mudar nada.
+// O que aparece pra digitar é um <input type="text"> com sufixo "-busca",
+// filtrado por um <datalist>. Esta função escreve nos dois: o hidden (ID)
+// e o texto visível (rótulo), a partir de um lancamentoId.
+function definirComboLancamento(id, lancamentoId) {
+  const hidden = document.getElementById(id);
+  const busca = document.getElementById(id + "-busca");
+  const l = STATE.lancamentos.find((x) => x.id === lancamentoId);
+  hidden.value = l ? l.id : "";
+  if (busca) busca.value = l ? rotuloLancamento(l) : "";
+}
+
+// Liga cada campo de busca ao hidden correspondente — só precisa rodar uma
+// vez (não a cada render), senão os listeners se acumulariam.
+function iniciarBuscaLancamento() {
+  CAMPOS_BUSCA_LANCAMENTO.forEach((id) => {
+    const busca = document.getElementById(id + "-busca");
+    if (!busca) return;
+    busca.addEventListener("input", () => {
+      const alvo = STATE.lancamentos.find((l) => rotuloLancamento(l) === busca.value);
+      document.getElementById(id).value = alvo ? alvo.id : "";
+    });
+  });
+}
+
 function preencherSelectsLancamento() {
-  const opcoes = STATE.lancamentos.map((l) => (
-    `<option value="${l.id}">${esc(l.nome)} (${l.tipo === "Entrada" ? "Entrada" : "Saída"} — ${esc(l.categoria)})</option>`
-  )).join("");
-  [
-    "mov-lancamento", "rec-lancamento", "compra-lancamento", "edit-mov-lancamento", "edit-rec-lancamento", "edit-compra-lancamento",
-    "qa-mov-lancamento", "qa-compra-lancamento", "qa-rec-lancamento"
-  ].forEach((id) => {
-    const sel = document.getElementById(id);
-    const valorAtual = sel.value;
-    sel.innerHTML = opcoes;
-    if (pendingSelecaoLancamento && pendingSelecaoLancamento.selectId === id && STATE.lancamentos.some((l) => l.id === pendingSelecaoLancamento.lancamentoId)) {
-      sel.value = pendingSelecaoLancamento.lancamentoId;
+  const datalistHtml = STATE.lancamentos.map((l) => `<option value="${esc(rotuloLancamento(l))}">`).join("");
+  const mapaPorId = mapaLancamentos();
+
+  CAMPOS_BUSCA_LANCAMENTO.forEach((id) => {
+    const hidden = document.getElementById(id);
+    const busca = document.getElementById(id + "-busca");
+    const datalist = document.getElementById("dl-" + id);
+    if (datalist) datalist.innerHTML = datalistHtml;
+
+    if (pendingSelecaoLancamento && pendingSelecaoLancamento.selectId === id && mapaPorId[pendingSelecaoLancamento.lancamentoId]) {
+      definirComboLancamento(id, pendingSelecaoLancamento.lancamentoId);
       pendingSelecaoLancamento = null;
-    } else if (valorAtual) {
-      sel.value = valorAtual;
+    } else if (hidden.value && !mapaPorId[hidden.value]) {
+      // O lançamento selecionado foi excluído — limpa em vez de deixar um
+      // ID morto guardado.
+      hidden.value = "";
+      if (busca) busca.value = "";
+    } else if (hidden.value && busca && document.activeElement !== busca) {
+      // Mantém o texto visível sincronizado (ex: se o nome do lançamento
+      // mudou), mas nunca sobrescreve enquanto a pessoa está digitando.
+      busca.value = rotuloLancamento(mapaPorId[hidden.value]);
     }
   });
 }
@@ -815,7 +857,7 @@ function abrirModalEditarCompra(id) {
   preencherSelectsPessoa();
   document.getElementById("edit-compra-id").value = c.id;
   document.getElementById("edit-compra-cartao").value = c.cartaoId;
-  document.getElementById("edit-compra-lancamento").value = c.lancamentoId;
+  definirComboLancamento("edit-compra-lancamento", c.lancamentoId);
   document.getElementById("edit-compra-descricao").value = c.descricao;
   garantirOpcaoPessoa("edit-compra-responsavel", c.responsavel || "");
   document.getElementById("edit-compra-valor").value = c.valorTotal;
@@ -1261,7 +1303,7 @@ function abrirModalEditarRecorrente(id) {
   if (!r) return mostrarToast("Custo recorrente não encontrado.", true);
   preencherSelectsLancamento();
   document.getElementById("edit-rec-id").value = r.id;
-  document.getElementById("edit-rec-lancamento").value = r.lancamentoId;
+  definirComboLancamento("edit-rec-lancamento", r.lancamentoId);
   document.getElementById("edit-rec-valor").value = r.valor;
   document.getElementById("edit-rec-inicio").value = r.dataInicio;
   document.getElementById("edit-rec-dia").value = r.diaVencimento;
@@ -1458,7 +1500,7 @@ function abrirModalMovimentacao(id) {
   preencherSelectsLancamento();
   preencherSelectsPessoa();
   document.getElementById("edit-mov-id").value = mov.id;
-  document.getElementById("edit-mov-lancamento").value = mov.lancamentoId;
+  definirComboLancamento("edit-mov-lancamento", mov.lancamentoId);
   document.getElementById("edit-mov-data").value = mov.data;
   document.getElementById("edit-mov-valor").value = mov.valor;
   document.getElementById("edit-mov-pago").value = mov.pago ? "true" : "false";
@@ -2179,4 +2221,5 @@ document.getElementById("mov-filtro-mes-ate").value = mesInicial;
 STATE.filtroMovMesDe = mesInicial;
 STATE.filtroMovMesAte = mesInicial;
 
+iniciarBuscaLancamento();
 iniciarListeners();

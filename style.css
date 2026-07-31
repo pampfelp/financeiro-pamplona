@@ -125,6 +125,8 @@ tbody tr.linha-clicavel{cursor:pointer;}
 
 .select-add{display:flex;gap:6px;align-items:stretch;}
 .select-add select{flex:1;min-width:0;}
+.select-add input[type="text"]{flex:1;min-width:0;font-family:var(--sans);padding:10px 11px;border:1.5px solid var(--line);border-radius:9px;background:#fffdfe;font-size:13.5px;color:var(--ink);}
+.select-add input[type="text"]:focus{outline:none;border-color:var(--roxo);}
 .btn-add-inline{flex:none;width:40px;border-radius:9px;border:1.5px solid var(--roxo);background:var(--accent-soft);color:var(--roxo);font-weight:800;font-size:17px;cursor:pointer;line-height:1;}
 .btn-add-inline:hover{background:var(--roxo);color:#fff;}
 
