@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle Financeiro Pamplona · Planilha administrativa</title>
+<meta name="robots" content="noindex, nofollow">
+<!--
+  Página de manutenção direta do banco (Firestore), pra quando for preciso
+  corrigir ou apagar um dado sem entrar no console do Firebase. Funciona
+  como uma planilha: abas por coleção, células editáveis com salvamento
+  automático, seleção múltipla + exclusão em massa, adicionar linha/coluna,
+  exportar e importar CSV/XLSX.
+
+  NÃO tem proteção de verdade contra alguém tecnicamente hábil — só uma
+  senha guardada no navegador pra evitar que alguém tropece no link sem
+  querer. NÃO linke esta página no menu do app principal — o acesso é só
+  por quem sabe a URL direta.
+-->
+<style>
+:root{
+  --bg:#F5F7FA; --panel:#FFFFFF; --ink:#1F2A3D; --ink-soft:#5C6B85; --ink-faint:#9AA7BD; --line:#DDE4EE;
+  --accent:#2C4C7C; --accent-soft:#E6EBF3; --roxo:#1B3358;
+  --credit:#16A34A; --credit-soft:#DCFCE7; --debit:#DC2626; --debit-soft:#FEE2E2;
+  --radius:12px; --display:'Sora',sans-serif; --sans:'Manrope','Helvetica Neue',Arial,sans-serif;
+  --mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;min-height:100vh;}
+button,input,select{font-family:var(--sans);font-size:13px;}
+.hidden{display:none!important;}
+
+#tela-bloqueada{position:fixed;inset:0;background:var(--roxo);display:flex;align-items:center;justify-content:center;z-index:999;color:#fff;font-family:var(--display);font-size:15px;text-align:center;padding:20px;}
+
+.topo{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px;background:var(--roxo);color:#fff;flex-wrap:wrap;}
+.topo h1{font-family:var(--display);font-size:16px;font-weight:800;}
+.topo .aviso{font-size:11.5px;color:rgba(255,255,255,.75);}
+
+.abas{display:flex;gap:4px;padding:10px 22px 0;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.abas button{background:none;border:none;padding:9px 14px;font-weight:700;color:var(--ink-soft);cursor:pointer;border-bottom:3px solid transparent;border-radius:8px 8px 0 0;}
+.abas button.active{color:var(--roxo);border-bottom-color:var(--roxo);background:var(--accent-soft);}
+
+.toolbar{display:flex;align-items:center;gap:8px;padding:10px 22px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.btn{font-size:12.5px;border-radius:8px;padding:8px 13px;cursor:pointer;border:1.5px solid var(--line);background:#fff;color:var(--ink);font-weight:700;}
+.btn:hover{background:var(--bg);}
+.btn-primary{background:var(--roxo);color:#fff;border:none;}
+.btn-danger{background:var(--debit-soft);color:#9d1c1c;border-color:var(--debit);}
+.toolbar .separador{width:1px;height:22px;background:var(--line);margin:0 4px;}
+.toolbar select{border-radius:8px;border:1.5px solid var(--line);padding:8px 10px;}
+
+.area-tabela{padding:0 22px 60px;overflow:auto;}
+table{border-collapse:collapse;background:var(--panel);min-width:100%;}
+th,td{border:1px solid var(--line);padding:0;}
+th{background:var(--bg);color:var(--ink-soft);font-size:11px;text-transform:uppercase;letter-spacing:.03em;padding:9px 10px;text-align:left;position:sticky;top:0;white-space:nowrap;}
+td{padding:0;}
+td .celula{padding:8px 10px;min-width:90px;outline:none;white-space:nowrap;}
+td .celula:focus{background:var(--accent-soft);box-shadow:inset 0 0 0 2px var(--roxo);}
+td.id-col .celula{color:var(--ink-faint);font-family:var(--mono);font-size:11.5px;}
+th.check-col, td.check-col{width:34px;text-align:center;padding:0;}
+td.check-col .celula{padding:8px;}
+
+.status{font-size:11.5px;color:var(--ink-faint);padding:8px 22px;}
+.toast{position:fixed;bottom:20px;right:20px;max-width:340px;background:var(--ink);color:#fff;border-radius:10px;padding:12px 16px;font-size:12.5px;box-shadow:0 14px 34px rgba(0,0,0,.25);z-index:900;}
+.toast.erro{background:var(--debit-soft);color:#7f1d1d;border:1.5px solid var(--debit);}
+</style>
+</head>
+<body>
+
+<div id="tela-bloqueada">Verificando acesso...</div>
+
+<div class="topo">
+  <h1>Controle Financeiro Pamplona · Planilha administrativa</h1>
+  <div class="aviso">Ferramenta de manutenção — edita o banco direto. Não é o app principal.</div>
+</div>
+
+<div class="abas" id="abas"></div>
+
+<div class="toolbar">
+  <button class="btn btn-primary" id="btn-nova-linha">+ Linha</button>
+  <button class="btn" id="btn-nova-coluna">+ Coluna</button>
+  <button class="btn btn-danger" id="btn-excluir-selecionados">Excluir selecionados</button>
+  <div class="separador"></div>
+  <select id="select-exportar">
+    <option value="">Exportar como...</option>
+    <option value="csv">CSV</option>
+    <option value="xlsx">XLSX (Excel)</option>
+    <option value="html">HTML</option>
+  </select>
+  <button class="btn" id="btn-importar">Importar CSV/XLSX</button>
+  <input type="file" id="input-importar" accept=".csv,.xlsx,.xls" class="hidden">
+</div>
+
+<div class="status" id="status"></div>
+<div class="area-tabela">
+  <table>
+    <thead><tr id="linha-cabecalho"></tr></thead>
+    <tbody id="corpo-tabela"></tbody>
+  </table>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="module">
+import { db } from "./firebase-init.js";
+import {
+  collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+// ══════════════ CONFIGURAÇÃO DO DOMÍNIO ══════════════
+const COLECOES = [
+  { nome: "lancamentos", label: "Lançamentos", campos: ["nome", "tipo", "categoria"] },
+  { nome: "movimentacoes", label: "Movimentações", campos: ["lancamentoId", "data", "valor", "pago", "responsavel", "origem", "cartaoId", "compraParceladaId", "pluggyTransactionId"] },
+  { nome: "cartoes", label: "Cartões", campos: ["nome", "limiteTotal", "diaFechamento", "diaVencimento", "ativo"] },
+  { nome: "comprasParceladas", label: "Compras parceladas", campos: ["cartaoId", "lancamentoId", "descricao", "responsavel", "valorTotal", "numParcelas", "dataCompra"] },
+  { nome: "recorrentes", label: "Custos recorrentes", campos: ["lancamentoId", "valor", "dataInicio", "diaVencimento", "ativo", "ultimoMesLancado"] },
+  { nome: "planos", label: "Planos", campos: ["icone", "nome", "descricao", "valorAlvo", "valorAcumulado", "aportePlanejadoMensal"] },
+  { nome: "pessoas", label: "Pessoas", campos: ["nome"] },
+  { nome: "conexoesBancarias", label: "Conexões Bancárias", campos: ["itemId", "instituicao", "status", "ultimaSincronizacao"] },
+  { nome: "historico", label: "Histórico", campos: ["lancamentoId", "nomeLancamento", "campo", "valorAnterior", "valorNovo", "tipoAlteracao"] },
+  { nome: "config", label: "Configurações", campos: ["rendaMensal", "saldoInicial"] },
+  { nome: "feriados", label: "Feriados", campos: ["data", "descricao"] }
+];
+
+// Hash SHA-256 da senha "pamplona2026" — TROQUE por uma senha sua. Veja no
+// README como calcular o hash de uma senha nova (ou peça pra quem te
+// ajudou a montar o sistema).
+const SENHA_HASH = "fe5c2a702e9d92853cb352d2402516c1ce035d7f51307b5f35f1e2b112ce35db";
+const CHAVE_LOCALSTORAGE = "finpamplona_planilha_ok";
+
+// ══════════════ ESTADO ══════════════
+
+const STATE = {
+  colecaoAtiva: COLECOES[0].nome,
+  docs: [],
+  colunasExtras: {},
+  selecionados: new Set()
+};
+let cancelarListener = null;
+
+// ══════════════ SENHA (cadeado simples, não é segurança real) ══════════════
+
+async function sha256Hex(texto) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(texto));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function checarAcesso() {
+  if (localStorage.getItem(CHAVE_LOCALSTORAGE) === "1") { desbloquear(); return; }
+  const tentativa = prompt("Senha da planilha administrativa:");
+  if (tentativa === null) return;
+  const hash = await sha256Hex(tentativa);
+  if (hash === SENHA_HASH) {
+    localStorage.setItem(CHAVE_LOCALSTORAGE, "1");
+    desbloquear();
+  } else {
+    alert("Senha incorreta.");
+    checarAcesso();
+  }
+}
+
+function desbloquear() {
+  document.getElementById("tela-bloqueada").classList.add("hidden");
+  iniciar();
+}
+
+// ══════════════ ABAS ══════════════
+
+function renderAbas() {
+  document.getElementById("abas").innerHTML = COLECOES.map((c) => (
+    `<button data-colecao="${c.nome}" class="${c.nome === STATE.colecaoAtiva ? "active" : ""}">${esc(c.label)}</button>`
+  )).join("");
+  document.querySelectorAll("#abas button").forEach((btn) => {
+    btn.addEventListener("click", () => selecionarAba(btn.dataset.colecao));
+  });
+}
+
+function selecionarAba(nomeColecao) {
+  STATE.colecaoAtiva = nomeColecao;
+  STATE.selecionados.clear();
+  renderAbas();
+  ouvirColecaoAtiva();
+}
+
+function ouvirColecaoAtiva() {
+  if (cancelarListener) cancelarListener();
+  document.getElementById("status").textContent = "Carregando...";
+  cancelarListener = onSnapshot(
+    collection(db, STATE.colecaoAtiva),
+    (snap) => {
+      STATE.docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      document.getElementById("status").textContent = `${STATE.docs.length} registro(s).`;
+      render();
+    },
+    (err) => mostrarToast("Erro ao carregar: " + err.message, true)
+  );
+}
+
+// ══════════════ COLUNAS ══════════════
+
+function colunasDaAbaAtiva() {
+  const config = COLECOES.find((c) => c.nome === STATE.colecaoAtiva);
+  const fixas = config ? config.campos : [];
+  const encontradas = new Set();
+  STATE.docs.forEach((d) => Object.keys(d).forEach((k) => { if (k !== "id") encontradas.add(k); }));
+  const extras = STATE.colunasExtras[STATE.colecaoAtiva] || new Set();
+  const todas = new Set([...fixas, ...encontradas, ...extras]);
+  return [...todas];
+}
+
+document.getElementById("btn-nova-coluna").addEventListener("click", () => {
+  const nome = prompt("Nome da nova coluna (sem espaços, ex: telefone):");
+  if (!nome) return;
+  if (!STATE.colunasExtras[STATE.colecaoAtiva]) STATE.colunasExtras[STATE.colecaoAtiva] = new Set();
+  STATE.colunasExtras[STATE.colecaoAtiva].add(nome.trim());
+  render();
+  mostrarToast(`Coluna "${nome}" criada. Ela só fica salva de verdade depois que você preencher algum valor nela.`);
+});
+
+// ══════════════ RENDERIZAÇÃO DA TABELA ══════════════
+
+function render() {
+  const colunas = colunasDaAbaAtiva();
+
+  document.getElementById("linha-cabecalho").innerHTML =
+    `<th class="check-col"><input type="checkbox" id="check-todos"></th>` +
+    `<th>id</th>` +
+    colunas.map((c) => `<th>${esc(c)}</th>`).join("");
+
+  document.getElementById("corpo-tabela").innerHTML = STATE.docs.map((d) => (
+    `<tr data-id="${d.id}">` +
+    `<td class="check-col"><div class="celula"><input type="checkbox" class="check-linha" data-id="${d.id}" ${STATE.selecionados.has(d.id) ? "checked" : ""}></div></td>` +
+    `<td class="id-col"><div class="celula">${esc(d.id)}</div></td>` +
+    colunas.map((c) => (
+      `<td><div class="celula" contenteditable="true" data-id="${d.id}" data-campo="${esc(c)}">${esc(formatarValor(d[c]))}</div></td>`
+    )).join("") +
+    `</tr>`
+  )).join("");
+
+  document.getElementById("check-todos").addEventListener("change", (e) => {
+    STATE.docs.forEach((d) => e.target.checked ? STATE.selecionados.add(d.id) : STATE.selecionados.delete(d.id));
+    render();
+  });
+  document.querySelectorAll(".check-linha").forEach((chk) => {
+    chk.addEventListener("change", () => {
+      chk.checked ? STATE.selecionados.add(chk.dataset.id) : STATE.selecionados.delete(chk.dataset.id);
+    });
+  });
+  document.querySelectorAll("td .celula[contenteditable]").forEach((el) => {
+    el.addEventListener("blur", () => salvarCelula(el.dataset.id, el.dataset.campo, el.textContent));
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } });
+  });
+}
+
+function formatarValor(v) {
+  if (v == null) return "";
+  if (v.toDate) return String(v.toDate().getTime());
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function parseValor(texto) {
+  const v = texto.trim();
+  if (v === "") return "";
+  if (/^-?\d+$/.test(v)) return parseInt(v, 10);
+  if (/^-?\d+\.\d+$/.test(v)) return parseFloat(v);
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return v;
+}
+
+async function salvarCelula(id, campo, textoNovo) {
+  try {
+    await updateDoc(doc(db, STATE.colecaoAtiva, id), { [campo]: parseValor(textoNovo) });
+  } catch (err) {
+    mostrarToast("Não foi possível salvar: " + err.message, true);
+  }
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function mostrarToast(msg, erro) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast" + (erro ? " erro" : "");
+  clearTimeout(mostrarToast._t);
+  mostrarToast._t = setTimeout(() => el.classList.add("hidden"), 6000);
+}
+
+// ══════════════ LINHAS: CRIAR / EXCLUIR EM MASSA ══════════════
+
+document.getElementById("btn-nova-linha").addEventListener("click", async () => {
+  try {
+    await addDoc(collection(db, STATE.colecaoAtiva), {});
+  } catch (err) {
+    mostrarToast("Não foi possível criar a linha: " + err.message, true);
+  }
+});
+
+document.getElementById("btn-excluir-selecionados").addEventListener("click", async () => {
+  if (STATE.selecionados.size === 0) { mostrarToast("Nenhuma linha selecionada."); return; }
+  if (!confirm(`Excluir ${STATE.selecionados.size} registro(s) de "${STATE.colecaoAtiva}"? Não tem como desfazer.`)) return;
+  for (const id of STATE.selecionados) {
+    try { await deleteDoc(doc(db, STATE.colecaoAtiva, id)); } catch (err) { mostrarToast("Erro ao excluir " + id + ": " + err.message, true); }
+  }
+  STATE.selecionados.clear();
+});
+
+// ══════════════ EXPORTAR ══════════════
+
+document.getElementById("select-exportar").addEventListener("change", (e) => {
+  const formato = e.target.value;
+  e.target.value = "";
+  if (!formato) return;
+  const colunas = colunasDaAbaAtiva();
+  const linhas = STATE.docs.map((d) => {
+    const linha = { id: d.id };
+    colunas.forEach((c) => { linha[c] = formatarValor(d[c]); });
+    return linha;
+  });
+  const ws = XLSX.utils.json_to_sheet(linhas);
+  if (formato === "csv") {
+    baixar(XLSX.utils.sheet_to_csv(ws), `${STATE.colecaoAtiva}.csv`, "text/csv;charset=utf-8;");
+  } else if (formato === "xlsx") {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, STATE.colecaoAtiva.slice(0, 31));
+    XLSX.writeFile(wb, `${STATE.colecaoAtiva}.xlsx`);
+  } else if (formato === "html") {
+    baixar(XLSX.utils.sheet_to_html(ws), `${STATE.colecaoAtiva}.html`, "text/html;charset=utf-8;");
+  }
+});
+
+function baixar(conteudo, nomeArquivo, tipo) {
+  const blob = new Blob([conteudo], { type: tipo });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = nomeArquivo;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ══════════════ IMPORTAR ══════════════
+
+document.getElementById("btn-importar").addEventListener("click", () => {
+  document.getElementById("input-importar").click();
+});
+
+document.getElementById("input-importar").addEventListener("change", async (e) => {
+  const arquivo = e.target.files[0];
+  if (!arquivo) return;
+  const buffer = await arquivo.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: "array" });
+  const linhas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+
+  const comId = linhas.filter((l) => l.id).length;
+  const semId = linhas.length - comId;
+  if (!confirm(
+    `Importar para "${STATE.colecaoAtiva}": ${comId} linha(s) com "id" vão ATUALIZAR registros existentes, ` +
+    `${semId} linha(s) sem "id" vão CRIAR registros novos. Confirmar?`
+  )) { e.target.value = ""; return; }
+
+  for (const linha of linhas) {
+    const { id, ...dados } = linha;
+    try {
+      if (id) await updateDoc(doc(db, STATE.colecaoAtiva, id), dados);
+      else await addDoc(collection(db, STATE.colecaoAtiva), dados);
+    } catch (err) {
+      mostrarToast("Erro ao importar uma linha: " + err.message, true);
+    }
+  }
+  e.target.value = "";
+  mostrarToast("Importação concluída.");
+});
+
+// ══════════════ INÍCIO ══════════════
+
+function iniciar() {
+  renderAbas();
+  ouvirColecaoAtiva();
+}
+
+checarAcesso();
+</script>
+</body>
+</html>

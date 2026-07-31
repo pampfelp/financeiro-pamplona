@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle Financeiro · Pamplona</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#1B3358">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Financeiro Pamplona">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<!-- Widget oficial da Pluggy Connect — abre a tela de login do banco dentro
+     de um iframe controlado pela Pluggy; este app nunca vê a senha do banco.
+     Carregado uma vez aqui; só é inicializado (window.PluggyConnect) quando
+     o usuário clica em "+ Conectar novo banco" no app.js. -->
+<script src="https://cdn.pluggy.ai/pluggy-connect/latest/pluggy-connect.js"></script>
+</head>
+<body>
+
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+<div class="mobile-topbar">
+  <button class="hamburger" id="btn-abrir-menu">☰</button>
+  <div class="mobile-topbar-title">Financeiro Pamplona</div>
+</div>
+
+<aside class="sidebar" id="sidebar">
+  <div class="brandmark">
+    <div class="co-nome">Financeiro Pamplona</div>
+    <div class="co-sub">controle financeiro pessoal</div>
+  </div>
+  <nav>
+    <a data-view="dashboard" class="active"><span class="ico">📊</span>Dashboard</a>
+    <a data-view="movimentacoes"><span class="ico">💸</span>Movimentações</a>
+    <a data-view="lancamentos"><span class="ico">🏷️</span>Lançamentos</a>
+    <a data-view="cartao"><span class="ico">💳</span>Cartão de Crédito</a>
+    <a data-view="conexoes"><span class="ico">🏦</span>Conexões Bancárias</a>
+    <a data-view="recorrentes"><span class="ico">🔁</span>Custos Recorrentes</a>
+    <a data-view="planos"><span class="ico">🎯</span>Planos</a>
+    <a data-view="historico"><span class="ico">🕒</span>Histórico</a>
+    <a data-view="config"><span class="ico">⚙️</span>Configurações</a>
+  </nav>
+</aside>
+
+<main class="app">
+
+  <!-- DASHBOARD -->
+  <section id="view-dashboard" class="view active">
+    <header class="top"><div><h1>Dashboard</h1>
+      <p class="view-desc">Visão geral da sua situação financeira: saldo atual, saldo previsto e as últimas movimentações lançadas em qualquer aba do sistema.</p>
+    </div></header>
+    <div class="kpi-grid" id="kpi-grid">
+      <div class="empty">Carregando indicadores…</div>
+    </div>
+    <div class="card">
+      <h2>Últimas movimentações</h2>
+      <table>
+        <thead><tr><th>Data</th><th>Lançamento</th><th>Tipo</th><th>Valor</th><th>Situação</th></tr></thead>
+        <tbody id="dash-movs-body"><tr><td colspan="5" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- MOVIMENTAÇÕES -->
+  <section id="view-movimentacoes" class="view">
+    <header class="top"><div><h1>Movimentações</h1>
+      <p class="view-desc">Use esta aba para lançar valores <strong>à vista</strong> (dinheiro, Pix, débito) — entradas e saídas que não passam pelo cartão de crédito. Compras no cartão são lançadas na aba "Cartão de Crédito".</p>
+    </div></header>
+    <div class="card">
+      <h2>Nova movimentação</h2>
+      <div class="row">
+        <div class="field">
+          <label>Lançamento</label>
+          <div class="select-add">
+            <select id="mov-lancamento"></select>
+            <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="mov-lancamento" title="Cadastrar novo lançamento">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Data</label>
+          <input type="date" id="mov-data">
+        </div>
+        <div class="field">
+          <label>Valor (R$)</label>
+          <input type="number" step="0.01" id="mov-valor" placeholder="0,00">
+        </div>
+        <div class="field">
+          <label>Quem comprou</label>
+          <div class="select-add">
+            <select id="mov-responsavel"><option value="">— Não informado —</option></select>
+            <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="mov-responsavel" title="Cadastrar nova pessoa">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Situação</label>
+          <select id="mov-pago">
+            <option value="false">Não pago</option>
+            <option value="true">Pago</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="btn-add-movimentacao">Adicionar</button>
+      </div>
+      <p class="hint">Não achou o lançamento? Use o botão "+" ao lado do campo.</p>
+    </div>
+
+    <div class="card">
+      <h2>Movimentações cadastradas</h2>
+      <div class="row">
+        <div class="field" style="max-width:180px;">
+          <label>De</label>
+          <input type="month" id="mov-filtro-mes-de">
+        </div>
+        <div class="field" style="max-width:180px;">
+          <label>Até</label>
+          <input type="month" id="mov-filtro-mes-ate">
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>Pessoa</label>
+          <select id="mov-filtro-pessoa"><option value="">Todas as pessoas</option></select>
+        </div>
+        <button class="btn" id="btn-mov-todos-meses">Ver todos os meses</button>
+      </div>
+      <div class="kpi-grid" id="mov-kpi-grid" style="margin-top:16px;"></div>
+      <table>
+        <thead><tr><th>Data</th><th>Lançamento</th><th>Tipo</th><th>Categoria</th><th>Quem comprou</th><th>Valor</th><th>Situação</th></tr></thead>
+        <tbody id="movs-body"><tr><td colspan="7" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- LANÇAMENTOS -->
+  <section id="view-lancamentos" class="view">
+    <header class="top"><div><h1>Lançamentos</h1>
+      <p class="view-desc">Aqui você cadastra os "nomes" que vão aparecer nos campos de seleção das outras abas (ex: Salário, Aluguel, Mercado). Cada lançamento define se é Entrada ou Saída e a categoria — é o que organiza os relatórios. Cadastre um lançamento antes de registrar a movimentação em si.</p>
+    </div></header>
+    <div class="card">
+      <h2>Novo lançamento</h2>
+      <div class="row">
+        <div class="field">
+          <label>Nome</label>
+          <input type="text" id="lanc-nome" placeholder="Ex: Salário, Aluguel, Mercado...">
+        </div>
+        <div class="field">
+          <label>Tipo</label>
+          <select id="lanc-tipo">
+            <option value="Entrada">Entrada</option>
+            <option value="Saida">Saída</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Categoria</label>
+          <input type="text" id="lanc-categoria" list="lista-categorias" placeholder="Ex: Moradia, Lazer, Renda..." autocomplete="off">
+          <datalist id="lista-categorias"></datalist>
+        </div>
+        <button class="btn btn-primary" id="btn-add-lancamento">Cadastrar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Lançamentos cadastrados</h2>
+      <p class="hint">Clique em <strong>Editar</strong> para alterar nome, tipo ou categoria. Movimentações e custos recorrentes que usam esse lançamento passam a exibir os novos dados automaticamente, e cada alteração fica registrada no Histórico.</p>
+      <table>
+        <thead><tr><th>Nome</th><th>Tipo</th><th>Categoria</th><th>Ação</th></tr></thead>
+        <tbody id="lancs-body"><tr><td colspan="4" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CARTÃO DE CRÉDITO -->
+  <section id="view-cartao" class="view">
+    <header class="top"><div><h1>Cartão de Crédito</h1>
+      <p class="view-desc">Cadastre seus cartões e lance aqui as compras feitas <strong>no crédito</strong> (à vista no cartão ou parceladas). O primeiro indicador abaixo mostra o valor total que você precisa separar do seu salário este mês para pagar a fatura.</p>
+    </div></header>
+    <div class="kpi-grid" id="cartao-kpi-grid"></div>
+    <div class="card">
+      <h2>Novo cartão</h2>
+      <div class="row">
+        <div class="field">
+          <label>Nome do cartão</label>
+          <input type="text" id="cartao-nome" placeholder="Ex: Nubank, Inter...">
+        </div>
+        <div class="field">
+          <label>Limite total (R$)</label>
+          <input type="number" step="0.01" id="cartao-limite">
+        </div>
+        <div class="field">
+          <label>Dia de fechamento</label>
+          <input type="number" min="1" max="31" id="cartao-fechamento" placeholder="Ex: 20">
+        </div>
+        <div class="field">
+          <label>Dia de vencimento</label>
+          <input type="number" min="1" max="31" id="cartao-vencimento" placeholder="Ex: 28">
+        </div>
+        <button class="btn btn-primary" id="btn-add-cartao">Cadastrar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Cartões cadastrados</h2>
+      <p class="hint" style="margin-top:0;">Clique numa linha para editar o cartão.</p>
+      <table>
+        <thead><tr><th>Cartão</th><th>Limite total</th><th>Utilizado</th><th>Disponível</th><th>Fatura deste mês</th><th>Fecha</th><th>Vence</th><th>Ativo</th></tr></thead>
+        <tbody id="cartoes-body"><tr><td colspan="8" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Nova compra parcelada</h2>
+      <div class="row">
+        <div class="field">
+          <label>Cartão</label>
+          <select id="compra-cartao"></select>
+        </div>
+        <div class="field">
+          <label>Lançamento</label>
+          <div class="select-add">
+            <select id="compra-lancamento"></select>
+            <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="compra-lancamento" title="Cadastrar novo lançamento">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Descrição</label>
+          <input type="text" id="compra-descricao" placeholder="Ex: Notebook, Geladeira...">
+        </div>
+        <div class="field">
+          <label>Quem comprou</label>
+          <div class="select-add">
+            <select id="compra-responsavel"><option value="">— Não informado —</option></select>
+            <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="compra-responsavel" title="Cadastrar nova pessoa">+</button>
+          </div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div class="field">
+          <label>Valor total (R$)</label>
+          <input type="number" step="0.01" id="compra-valor">
+        </div>
+        <div class="field">
+          <label>Nº de parcelas</label>
+          <input type="number" min="1" max="60" id="compra-parcelas" value="1">
+        </div>
+        <div class="field">
+          <label>Data da compra</label>
+          <input type="date" id="compra-data">
+        </div>
+        <button class="btn btn-primary" id="btn-add-compra">Lançar compra</button>
+      </div>
+      <p class="hint">Ao lançar, todas as parcelas já são criadas em Movimentações, com vencimento calculado a partir do fechamento/vencimento do cartão escolhido.</p>
+    </div>
+
+    <div class="card">
+      <h2>Compras parceladas</h2>
+      <p class="hint" style="margin-top:0;">Clique numa linha para editar a descrição, quem comprou ou excluir a compra.</p>
+      <table>
+        <thead><tr><th>Descrição</th><th>Cartão</th><th>Quem comprou</th><th>Valor total</th><th>Parcelas</th><th>Valor/parcela</th><th>Data da compra</th></tr></thead>
+        <tbody id="compras-body"><tr><td colspan="7" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Gastos lançados no cartão (parcelas)</h2>
+      <p class="hint" style="margin-top:0;">Todas as parcelas já lançadas em Movimentações a partir de uma compra no cartão. Clique numa linha para <strong>corrigir valor, data, quem comprou ou situação</strong> em caso de erro de lançamento — toda alteração fica registrada no Histórico.</p>
+      <table>
+        <thead><tr><th>Data</th><th>Compra</th><th>Cartão</th><th>Quem comprou</th><th>Valor</th><th>Situação</th></tr></thead>
+        <tbody id="parcelas-cartao-body"><tr><td colspan="6" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CONEXÕES BANCÁRIAS -->
+  <section id="view-conexoes" class="view">
+    <header class="top"><div><h1>Conexões Bancárias</h1>
+      <p class="view-desc">Conecte suas contas via Open Finance (Pluggy) para importar automaticamente as transações do banco como movimentações. Nada aqui envolve mexer com o dinheiro de verdade.</p>
+    </div>
+    <div class="top-actions"><button class="btn btn-primary" id="btn-conectar-banco">+ Conectar novo banco</button></div>
+    </header>
+    <p class="hint">Esta integração é <strong>somente leitura</strong>: ela só lê extratos e transações do banco para importar aqui como movimentações — <strong>nunca</strong> faz pagamentos, transferências ou qualquer outra ação que mexa no seu dinheiro. Você pode revogar o acesso a qualquer momento diretamente com o banco ou pela Pluggy.</p>
+    <div class="conexoes-grid" id="conexoes-grid" style="margin-top:16px;">
+      <div class="empty">Carregando conexões…</div>
+    </div>
+  </section>
+
+  <!-- CUSTOS RECORRENTES -->
+  <section id="view-recorrentes" class="view">
+    <header class="top"><div><h1>Custos Recorrentes</h1>
+      <p class="view-desc">Cadastre aqui gastos que se repetem todo mês (aluguel, assinaturas, mensalidades). O sistema lança automaticamente a movimentação do mês em "Movimentações" quando alguém abre o app depois da virada do mês.</p>
+    </div></header>
+    <div class="kpi-grid" id="rec-kpi-grid"></div>
+    <div class="card">
+      <h2>Novo custo recorrente</h2>
+      <div class="row">
+        <div class="field">
+          <label>Lançamento</label>
+          <div class="select-add">
+            <select id="rec-lancamento"></select>
+            <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="rec-lancamento" title="Cadastrar novo lançamento">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Valor (R$)</label>
+          <input type="number" step="0.01" id="rec-valor">
+        </div>
+        <div class="field">
+          <label>Data início</label>
+          <input type="date" id="rec-inicio">
+        </div>
+        <div class="field">
+          <label>Dia vencimento</label>
+          <input type="number" min="1" max="31" id="rec-dia">
+        </div>
+        <div class="field">
+          <label>Ativo</label>
+          <select id="rec-ativo">
+            <option value="true">Sim</option>
+            <option value="false">Não</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="btn-add-recorrente">Adicionar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Custos recorrentes</h2>
+      <p class="hint" style="margin-top:0;">Clique numa linha para editar o custo recorrente. O selo ATIVO/INATIVO alterna direto no clique.</p>
+      <p class="hint">O sistema já tenta lançar os recorrentes pendentes do mês automaticamente ao abrir esta página — o botão abaixo é só pra forçar a checagem na hora.</p>
+      <button class="btn btn-primary" id="btn-lancar-pendentes" style="margin-bottom:14px;">Lançar recorrentes pendentes deste mês</button>
+      <table>
+        <thead><tr><th>Lançamento</th><th>Valor</th><th>Dia venc.</th><th>Próx. vencimento</th><th>Ativo</th></tr></thead>
+        <tbody id="recs-body"><tr><td colspan="5" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- PLANOS -->
+  <section id="view-planos" class="view">
+    <header class="top"><div><h1>Planos</h1>
+      <p class="view-desc">Metas de economia — uma viagem, um notebook, o que você quiser. Cadastre quanto custa, guarde aos poucos e acompanhe a previsão de quando consegue chegar lá.</p>
+    </div>
+    <div class="top-actions"><button class="btn btn-primary" id="btn-novo-plano">+ Novo plano</button></div>
+    </header>
+    <div class="kpi-grid" id="planos-kpi-grid"></div>
+    <div class="planos-grid" id="planos-grid">
+      <div class="empty">Carregando planos…</div>
+    </div>
+  </section>
+
+  <!-- HISTÓRICO -->
+  <section id="view-historico" class="view">
+    <header class="top"><div><h1>Histórico de Alterações</h1>
+      <p class="view-desc">Registro permanente de tudo que foi editado ou excluído em qualquer aba do sistema — inclusive correções feitas em gastos do cartão de crédito. Nada aqui é apagado ou sobrescrito.</p>
+    </div></header>
+    <div class="card">
+      <p class="hint" style="margin-top:0;">Log permanente de todas as edições e exclusões — nada aqui é apagado ou sobrescrito.</p>
+      <table>
+        <thead><tr><th>Data e hora</th><th>Lançamento</th><th>Campo</th><th>Valor anterior</th><th>Novo valor</th><th>Tipo</th></tr></thead>
+        <tbody id="historico-body"><tr><td colspan="6" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CONFIG -->
+  <section id="view-config" class="view">
+    <header class="top"><div><h1>Configurações</h1>
+      <p class="view-desc">Ajustes gerais usados nos cálculos do Dashboard: sua renda mensal e o saldo que você tem em caixa/conta hoje.</p>
+    </div></header>
+    <div class="card">
+      <h2>Configurações gerais</h2>
+      <div class="row">
+        <div class="field">
+          <label>Renda mensal (R$)</label>
+          <input type="number" step="0.01" id="cfg-renda">
+        </div>
+        <div class="field">
+          <label>Saldo inicial (R$)</label>
+          <input type="number" step="0.01" id="cfg-saldo">
+        </div>
+        <button class="btn btn-primary" id="btn-salvar-config">Salvar</button>
+      </div>
+      <p class="hint">O saldo inicial é o valor que você tem em caixa/conta hoje, antes das movimentações já pagas registradas no sistema. A renda mensal é usada para calcular o percentual de renda gasta e o gasto permitido até hoje.</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- MODAL: editar lançamento -->
+<div class="modal-overlay" id="modal-editar">
+  <div class="modal-box">
+    <h2>Editar lançamento</h2>
+    <input type="hidden" id="edit-lanc-id">
+    <div class="field" style="margin-top:14px;">
+      <label>Nome</label>
+      <input type="text" id="edit-lanc-nome">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Tipo</label>
+      <select id="edit-lanc-tipo">
+        <option value="Entrada">Entrada</option>
+        <option value="Saida">Saída</option>
+      </select>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Categoria</label>
+      <input type="text" id="edit-lanc-categoria" list="lista-categorias" autocomplete="off">
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:18px;">
+      <button class="btn" id="btn-cancelar-edicao-lanc">Cancelar</button>
+      <button class="btn btn-primary" id="btn-salvar-edicao-lanc">Salvar alterações</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: editar/excluir movimentação -->
+<div class="modal-overlay" id="modal-editar-mov">
+  <div class="modal-box">
+    <h2>Editar movimentação</h2>
+    <input type="hidden" id="edit-mov-id">
+    <div class="field" style="margin-top:14px;">
+      <label>Lançamento</label>
+      <div class="select-add">
+        <select id="edit-mov-lancamento"></select>
+        <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-mov-lancamento" title="Cadastrar novo lançamento">+</button>
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Data</label>
+      <input type="date" id="edit-mov-data">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Valor (R$)</label>
+      <input type="number" step="0.01" id="edit-mov-valor">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Quem comprou</label>
+      <div class="select-add">
+        <select id="edit-mov-responsavel"><option value="">— Não informado —</option></select>
+        <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="edit-mov-responsavel" title="Cadastrar nova pessoa">+</button>
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Situação</label>
+      <select id="edit-mov-pago">
+        <option value="false">Não pago</option>
+        <option value="true">Pago</option>
+      </select>
+    </div>
+    <div class="row" style="justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-danger" id="btn-excluir-mov">Excluir</button>
+      <div class="row" style="width:auto;">
+        <button class="btn" id="btn-cancelar-edicao-mov">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-edicao-mov">Salvar alterações</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: novo lançamento (reutilizado a partir de qualquer campo "Lançamento") -->
+<div class="modal-overlay" id="modal-novo-lancamento">
+  <div class="modal-box">
+    <h2>Novo lançamento</h2>
+    <div class="field" style="margin-top:14px;">
+      <label>Nome</label>
+      <input type="text" id="novo-lanc-nome" placeholder="Ex: Salário, Aluguel, Mercado...">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Tipo</label>
+      <select id="novo-lanc-tipo">
+        <option value="Entrada">Entrada</option>
+        <option value="Saida">Saída</option>
+      </select>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Categoria</label>
+      <input type="text" id="novo-lanc-categoria" list="lista-categorias" placeholder="Ex: Moradia, Lazer, Renda..." autocomplete="off">
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:18px;">
+      <button class="btn" id="btn-cancelar-novo-lancamento">Cancelar</button>
+      <button class="btn btn-primary" id="btn-salvar-novo-lancamento">Cadastrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: editar/excluir cartão -->
+<div class="modal-overlay" id="modal-editar-cartao">
+  <div class="modal-box">
+    <h2>Editar cartão</h2>
+    <input type="hidden" id="edit-cartao-id">
+    <div class="field" style="margin-top:14px;">
+      <label>Nome do cartão</label>
+      <input type="text" id="edit-cartao-nome">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Limite total (R$)</label>
+      <input type="number" step="0.01" id="edit-cartao-limite">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Dia de fechamento</label>
+      <input type="number" min="1" max="31" id="edit-cartao-fechamento">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Dia de vencimento</label>
+      <input type="number" min="1" max="31" id="edit-cartao-vencimento">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Ativo</label>
+      <select id="edit-cartao-ativo">
+        <option value="true">Sim</option>
+        <option value="false">Não</option>
+      </select>
+    </div>
+    <div class="row" style="justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-danger" id="btn-excluir-cartao">Excluir</button>
+      <div class="row" style="width:auto;">
+        <button class="btn" id="btn-cancelar-edicao-cartao">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-edicao-cartao">Salvar alterações</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: editar/excluir custo recorrente -->
+<div class="modal-overlay" id="modal-editar-recorrente">
+  <div class="modal-box">
+    <h2>Editar custo recorrente</h2>
+    <input type="hidden" id="edit-rec-id">
+    <div class="field" style="margin-top:14px;">
+      <label>Lançamento</label>
+      <div class="select-add">
+        <select id="edit-rec-lancamento"></select>
+        <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-rec-lancamento" title="Cadastrar novo lançamento">+</button>
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Valor (R$)</label>
+      <input type="number" step="0.01" id="edit-rec-valor">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Data início</label>
+      <input type="date" id="edit-rec-inicio">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Dia vencimento</label>
+      <input type="number" min="1" max="31" id="edit-rec-dia">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Ativo</label>
+      <select id="edit-rec-ativo">
+        <option value="true">Sim</option>
+        <option value="false">Não</option>
+      </select>
+    </div>
+    <div class="row" style="justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-danger" id="btn-excluir-recorrente">Excluir</button>
+      <div class="row" style="width:auto;">
+        <button class="btn" id="btn-cancelar-edicao-rec">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-edicao-rec">Salvar alterações</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: editar/excluir compra parcelada -->
+<div class="modal-overlay" id="modal-editar-compra">
+  <div class="modal-box" style="max-width:480px;">
+    <h2>Editar compra parcelada</h2>
+    <input type="hidden" id="edit-compra-id">
+    <p class="hint" id="edit-compra-info" style="margin-top:6px;"></p>
+    <div class="row" style="margin-top:10px;">
+      <div class="field">
+        <label>Cartão</label>
+        <select id="edit-compra-cartao"></select>
+      </div>
+      <div class="field">
+        <label>Lançamento</label>
+        <div class="select-add">
+          <select id="edit-compra-lancamento"></select>
+          <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-compra-lancamento" title="Cadastrar novo lançamento">+</button>
+        </div>
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Descrição</label>
+      <input type="text" id="edit-compra-descricao">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Quem comprou</label>
+      <div class="select-add">
+        <select id="edit-compra-responsavel"><option value="">— Não informado —</option></select>
+        <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="edit-compra-responsavel" title="Cadastrar nova pessoa">+</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="field">
+        <label>Valor total (R$)</label>
+        <input type="number" step="0.01" id="edit-compra-valor">
+      </div>
+      <div class="field">
+        <label>Nº de parcelas</label>
+        <input type="number" min="1" max="60" id="edit-compra-parcelas">
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Data da compra</label>
+      <input type="date" id="edit-compra-data">
+    </div>
+    <p class="hint">Mudar cartão, valor, nº de parcelas ou data da compra recalcula automaticamente as parcelas ainda não pagas em Movimentações (respeitando o dia de fechamento do cartão — compra feita a partir do fechamento entra na fatura do mês seguinte). Parcelas já pagas nunca são alteradas.</p>
+    <button class="btn" id="btn-recalcular-compra" style="width:100%;margin-top:6px;">🔄 Recalcular parcelas com os dados atuais</button>
+    <p class="hint" style="margin-top:6px;">Use isso se as parcelas foram criadas antes de algum ajuste na regra de fechamento do sistema (ex: data de vencimento errada) — recalcula mesmo sem mudar nenhum campo acima.</p>
+    <div class="row" style="justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-danger" id="btn-excluir-compra">Excluir compra</button>
+      <div class="row" style="width:auto;">
+        <button class="btn" id="btn-cancelar-edicao-compra">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-edicao-compra">Salvar alterações</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: nova pessoa (reutilizado a partir de qualquer campo "Quem comprou") -->
+<div class="modal-overlay" id="modal-nova-pessoa">
+  <div class="modal-box">
+    <h2>Nova pessoa</h2>
+    <div class="field" style="margin-top:14px;">
+      <label>Nome</label>
+      <input type="text" id="nova-pessoa-nome" placeholder="Ex: Pamplona, Paula...">
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:18px;">
+      <button class="btn" id="btn-cancelar-nova-pessoa">Cancelar</button>
+      <button class="btn btn-primary" id="btn-salvar-nova-pessoa">Cadastrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: novo/editar plano -->
+<div class="modal-overlay" id="modal-plano">
+  <div class="modal-box" style="max-width:480px;">
+    <h2 id="modal-plano-titulo">Novo plano</h2>
+    <input type="hidden" id="plano-id">
+    <div class="row" style="margin-top:14px;">
+      <div class="field" style="max-width:110px;">
+        <label>Ícone</label>
+        <select id="plano-icone">
+          <option value="🎯">🎯</option>
+          <option value="🏠">🏠</option>
+          <option value="🚗">🚗</option>
+          <option value="✈️">✈️</option>
+          <option value="🎓">🎓</option>
+          <option value="💍">💍</option>
+          <option value="📱">📱</option>
+          <option value="💻">💻</option>
+          <option value="🛋️">🛋️</option>
+          <option value="🎉">🎉</option>
+          <option value="🏖️">🏖️</option>
+          <option value="🚲">🚲</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Nome do plano</label>
+        <input type="text" id="plano-nome" placeholder="Ex: Viagem pra praia, Notebook novo...">
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Descrição</label>
+      <textarea id="plano-descricao" rows="3" placeholder="Detalhes do plano — o que é, por quê, quando..." style="font-family:var(--sans);padding:10px 11px;border:1.5px solid var(--line);border-radius:9px;background:#fffdfe;font-size:13.5px;color:var(--ink);resize:vertical;"></textarea>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div class="field">
+        <label>Quanto vai custar (R$)</label>
+        <input type="number" step="0.01" id="plano-valor-alvo">
+      </div>
+      <div class="field">
+        <label>Meta de economia por mês (R$)</label>
+        <input type="number" step="0.01" id="plano-aporte-mensal" placeholder="Opcional">
+      </div>
+    </div>
+    <p class="hint">A meta mensal é só um valor de referência pra calcular a previsão — pode editar ou deixar em branco e usar o simulador no card do plano.</p>
+    <div class="row" style="justify-content:space-between; margin-top:18px;">
+      <button class="btn btn-danger" id="btn-excluir-plano">Excluir plano</button>
+      <div class="row" style="width:auto;">
+        <button class="btn" id="btn-cancelar-plano">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-plano">Salvar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: registrar aporte/retirada num plano -->
+<div class="modal-overlay" id="modal-aporte-plano">
+  <div class="modal-box">
+    <h2>Registrar movimento no plano</h2>
+    <input type="hidden" id="aporte-plano-id">
+    <p class="hint" id="aporte-plano-nome" style="margin-top:6px;font-weight:700;color:var(--ink);"></p>
+    <div class="field" style="margin-top:10px;">
+      <label>Tipo</label>
+      <select id="aporte-tipo">
+        <option value="Aporte">Aporte (guardei mais dinheiro)</option>
+        <option value="Retirada">Retirada (usei/tirei dinheiro do plano)</option>
+      </select>
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Valor (R$)</label>
+      <input type="number" step="0.01" id="aporte-valor">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Data</label>
+      <input type="date" id="aporte-data">
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:18px;">
+      <button class="btn" id="btn-cancelar-aporte">Cancelar</button>
+      <button class="btn btn-primary" id="btn-salvar-aporte">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Ação rápida -->
+<div class="modal-overlay" id="modal-acao-rapida">
+  <div class="modal-box" style="max-width:480px;">
+    <h2>Ação rápida</h2>
+    <div class="qa-tabs" id="qa-tabs">
+      <button type="button" class="qa-tab active" data-qa-tipo="movimentacao">💸 Movimentação</button>
+      <button type="button" class="qa-tab" data-qa-tipo="compra">💳 Compra no cartão</button>
+      <button type="button" class="qa-tab" data-qa-tipo="recorrente">🔁 Recorrente</button>
+    </div>
+
+    <div class="qa-form" id="qa-form-movimentacao">
+      <div class="field" style="margin-top:14px;">
+        <label>Lançamento</label>
+        <div class="select-add">
+          <select id="qa-mov-lancamento"></select>
+          <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="qa-mov-lancamento" title="Cadastrar novo lançamento">+</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div class="field"><label>Data</label><input type="date" id="qa-mov-data"></div>
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="qa-mov-valor" placeholder="0,00"></div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div class="field">
+          <label>Quem comprou</label>
+          <div class="select-add">
+            <select id="qa-mov-responsavel"><option value="">— Não informado —</option></select>
+            <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="qa-mov-responsavel" title="Cadastrar nova pessoa">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Situação</label>
+          <select id="qa-mov-pago">
+            <option value="false">Não pago</option>
+            <option value="true">Pago</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="qa-form hidden" id="qa-form-compra">
+      <div class="row" style="margin-top:14px;">
+        <div class="field">
+          <label>Cartão</label>
+          <select id="qa-compra-cartao"></select>
+        </div>
+        <div class="field">
+          <label>Lançamento</label>
+          <div class="select-add">
+            <select id="qa-compra-lancamento"></select>
+            <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="qa-compra-lancamento" title="Cadastrar novo lançamento">+</button>
+          </div>
+        </div>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Descrição</label>
+        <input type="text" id="qa-compra-descricao" placeholder="Ex: Ifood, Uber...">
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Quem comprou</label>
+        <div class="select-add">
+          <select id="qa-compra-responsavel"><option value="">— Não informado —</option></select>
+          <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="qa-compra-responsavel" title="Cadastrar nova pessoa">+</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div class="field"><label>Valor total (R$)</label><input type="number" step="0.01" id="qa-compra-valor"></div>
+        <div class="field"><label>Nº de parcelas</label><input type="number" min="1" max="60" id="qa-compra-parcelas" value="1"></div>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Data da compra</label>
+        <input type="date" id="qa-compra-data">
+      </div>
+    </div>
+
+    <div class="qa-form hidden" id="qa-form-recorrente">
+      <div class="field" style="margin-top:14px;">
+        <label>Lançamento</label>
+        <div class="select-add">
+          <select id="qa-rec-lancamento"></select>
+          <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="qa-rec-lancamento" title="Cadastrar novo lançamento">+</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div class="field"><label>Valor (R$)</label><input type="number" step="0.01" id="qa-rec-valor"></div>
+        <div class="field"><label>Dia vencimento</label><input type="number" min="1" max="31" id="qa-rec-dia"></div>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Data início</label>
+        <input type="date" id="qa-rec-inicio">
+      </div>
+    </div>
+
+    <div class="row" style="justify-content:flex-end; margin-top:18px;">
+      <button class="btn" id="btn-cancelar-acao-rapida">Cancelar</button>
+      <button class="btn btn-primary" id="btn-salvar-acao-rapida">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="fab-bar">
+  <button class="fab-btn" id="btn-acao-rapida" title="Ação rápida">+</button>
+</div>
+
+<div class="toast hidden" id="toast">
+  <div class="toast-title" id="toast-title">Aviso</div>
+  <div id="toast-msg"></div>
+</div>
+
+<!--
+  Ordem importa: firebase-init.js exporta `db`, app.js importa dele. Os dois
+  precisam ser type="module" — não dá pra abrir este arquivo direto do disco
+  (file://) para testar, veja o README sobre isso.
+-->
+<script type="module" src="firebase-init.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

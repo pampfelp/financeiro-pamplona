@@ -1,0 +1,126 @@
+rules_version = '2';
+
+// Regras de FORMATO, não de identidade — este sistema não usa Firebase Auth
+// (é de uso pessoal/familiar, sem login). Isso barra gravações mal-formadas,
+// mas não impede alguém tecnicamente hábil de abrir o DevTools e escrever
+// fora das regras de negócio do app.js. Trade-off aceitável para um sistema
+// de uso pessoal com poucas pessoas — mas como envolve dados financeiros,
+// vale considerar Firebase Auth no futuro se isso passar a importar.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /lancamentos/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['nome', 'tipo', 'categoria'])
+                    && request.resource.data.nome is string
+                    && request.resource.data.nome.size() > 0
+                    && request.resource.data.nome.size() < 200
+                    && (request.resource.data.tipo == 'Entrada' || request.resource.data.tipo == 'Saida')
+                    && request.resource.data.categoria is string
+                    && request.resource.data.categoria.size() > 0;
+      allow update: if request.resource.data.nome is string
+                    && request.resource.data.nome.size() > 0
+                    && (request.resource.data.tipo == 'Entrada' || request.resource.data.tipo == 'Saida')
+                    && request.resource.data.categoria is string;
+      allow delete: if true;
+    }
+
+    match /movimentacoes/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.lancamentoId is string
+                    && request.resource.data.data is string
+                    && request.resource.data.valor is number
+                    && request.resource.data.valor > 0
+                    && request.resource.data.pago is bool;
+      allow delete: if true;
+    }
+
+    match /cartoes/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.nome is string
+                    && request.resource.data.nome.size() > 0
+                    && request.resource.data.limiteTotal is number
+                    && request.resource.data.limiteTotal > 0
+                    && request.resource.data.diaFechamento is number
+                    && request.resource.data.diaVencimento is number;
+      allow delete: if true;
+    }
+
+    match /comprasParceladas/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.cartaoId is string
+                    && request.resource.data.lancamentoId is string
+                    && request.resource.data.descricao is string
+                    && request.resource.data.valorTotal is number
+                    && request.resource.data.numParcelas is number;
+      allow delete: if true;
+    }
+
+    match /recorrentes/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.lancamentoId is string
+                    && request.resource.data.valor is number
+                    && request.resource.data.diaVencimento is number
+                    && request.resource.data.ativo is bool;
+      allow delete: if true;
+    }
+
+    // Log permanente de alterações — create-only, nunca update/delete, para
+    // preservar a integridade do histórico.
+    match /historico/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['campo', 'valorAnterior', 'valorNovo']);
+      allow update, delete: if false;
+    }
+
+    match /config/{id} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /feriados/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.data is string;
+      allow delete: if true;
+    }
+
+    match /pessoas/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.nome is string
+                    && request.resource.data.nome.size() > 0
+                    && request.resource.data.nome.size() < 100;
+      allow delete: if true;
+    }
+
+    match /planos/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.nome is string
+                    && request.resource.data.nome.size() > 0
+                    && request.resource.data.valorAlvo is number
+                    && request.resource.data.valorAlvo > 0;
+      allow delete: if true;
+
+      // Log de aportes/retiradas — create-only, nunca update/delete, pra
+      // preservar a integridade do histórico do plano.
+      match /aportes/{aporteId} {
+        allow read: if true;
+        allow create: if request.resource.data.valor is number
+                      && request.resource.data.valor > 0
+                      && (request.resource.data.tipo == 'Aporte' || request.resource.data.tipo == 'Retirada');
+        allow update, delete: if false;
+      }
+    }
+
+    // Conexões Bancárias (Open Finance via Pluggy) — só o vínculo com cada
+    // "item" (instituição conectada) fica aqui. As credenciais reais nunca
+    // passam pelo Firestore: ficam nas Script Properties do Code.gs.
+    match /conexoesBancarias/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.itemId is string
+                    && request.resource.data.itemId.size() > 0
+                    && request.resource.data.instituicao is string
+                    && request.resource.data.status is string;
+      allow delete: if true;
+    }
+  }
+}
