@@ -126,6 +126,25 @@
           <label>Pessoa</label>
           <select id="mov-filtro-pessoa"><option value="">Todas as pessoas</option></select>
         </div>
+        <div class="field" style="max-width:200px;">
+          <label>Banco</label>
+          <select id="mov-filtro-banco"><option value="">Todos os bancos</option></select>
+        </div>
+        <div class="field" style="max-width:190px;">
+          <label>Tipo de conta</label>
+          <select id="mov-filtro-tipo-conta">
+            <option value="">Todas</option>
+            <option value="banco">Conta bancária</option>
+            <option value="cartao">Cartão (Open Finance)</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:180px;">
+          <label>Revisão</label>
+          <select id="mov-filtro-revisado">
+            <option value="">Todas</option>
+            <option value="nao">Só a revisar</option>
+          </select>
+        </div>
         <button class="btn" id="btn-mov-todos-meses">Ver todos os meses</button>
       </div>
       <div class="kpi-grid" id="mov-kpi-grid" style="margin-top:16px;"></div>
@@ -422,6 +441,7 @@
   <div class="modal-box">
     <h2>Editar movimentação</h2>
     <input type="hidden" id="edit-mov-id">
+    <p class="hint hidden" id="edit-mov-info" style="margin-top:6px;"></p>
     <div class="field" style="margin-top:14px;">
       <label>Lançamento</label>
       <div class="select-add">

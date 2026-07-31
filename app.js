@@ -30,8 +30,16 @@ const STATE = {
   config: { rendaMensal: 0, saldoInicial: 0 },
   filtroMovMesDe: "",
   filtroMovMesAte: "",
-  filtroMovPessoa: ""
+  filtroMovPessoa: "",
+  filtroMovBanco: "",
+  filtroMovTipoConta: "",
+  filtroMovRevisado: ""
 };
+
+// Evita sincronizar a mesma conexão bancária mais de uma vez por sessão —
+// o listener de conexoesBancarias dispara de novo a cada escrita (inclusive
+// as que a própria sincronização faz), então sem essa guarda viraria loop.
+const conexoesAutoSincronizadasNestaSessao = new Set();
 
 let recorrentesCarregados = false;
 let jaVerificouRecorrentesPendentes = false;
@@ -424,6 +432,21 @@ function filtrarPorPessoa(lista) {
   return lista.filter((m) => (m.responsavel || "") === STATE.filtroMovPessoa);
 }
 
+function filtrarPorBanco(lista) {
+  if (!STATE.filtroMovBanco) return lista;
+  return lista.filter((m) => (m.instituicao || "") === STATE.filtroMovBanco);
+}
+
+function filtrarPorTipoConta(lista) {
+  if (!STATE.filtroMovTipoConta) return lista;
+  return lista.filter((m) => (m.contaTipo || "") === STATE.filtroMovTipoConta);
+}
+
+function filtrarNaoRevisadas(lista) {
+  if (STATE.filtroMovRevisado !== "nao") return lista;
+  return lista.filter((m) => m.origem === "Open Finance" && m.revisado !== true);
+}
+
 // Opções do filtro vêm da união de "pessoas" cadastradas + qualquer nome
 // já usado em movimentações (cobre registros antigos com texto livre) —
 // assim ninguém some do filtro só porque não foi formalmente cadastrado.
@@ -438,8 +461,33 @@ function preencherFiltroPessoa(enriquecidas) {
   if (valorAtual) sel.value = valorAtual;
 }
 
+// Mesma ideia do filtro de pessoa: união das conexões bancárias cadastradas
+// + qualquer nome de banco já usado em movimentações importadas.
+function preencherFiltroBanco(enriquecidas) {
+  const nomes = new Set();
+  STATE.conexoesBancarias.forEach((c) => { if (c.instituicao) nomes.add(c.instituicao); });
+  enriquecidas.forEach((m) => { if (m.instituicao) nomes.add(m.instituicao); });
+  const sel = document.getElementById("mov-filtro-banco");
+  const valorAtual = sel.value;
+  sel.innerHTML = '<option value="">Todos os bancos</option>' +
+    [...nomes].sort((a, b) => a.localeCompare(b, "pt-BR")).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  if (valorAtual) sel.value = valorAtual;
+}
+
 document.getElementById("mov-filtro-pessoa").addEventListener("change", (e) => {
   STATE.filtroMovPessoa = e.target.value;
+  renderMovimentacoes();
+});
+document.getElementById("mov-filtro-banco").addEventListener("change", (e) => {
+  STATE.filtroMovBanco = e.target.value;
+  renderMovimentacoes();
+});
+document.getElementById("mov-filtro-tipo-conta").addEventListener("change", (e) => {
+  STATE.filtroMovTipoConta = e.target.value;
+  renderMovimentacoes();
+});
+document.getElementById("mov-filtro-revisado").addEventListener("change", (e) => {
+  STATE.filtroMovRevisado = e.target.value;
   renderMovimentacoes();
 });
 
@@ -468,20 +516,30 @@ function renderMovimentacoes() {
   });
 
   preencherFiltroPessoa(enriquecidas);
-  const filtradas = filtrarPorPessoa(filtrarPorMes(enriquecidas));
+  preencherFiltroBanco(enriquecidas);
+  const filtradas = filtrarNaoRevisadas(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorMes(enriquecidas)))));
 
   const body = document.getElementById("movs-body");
   if (!filtradas.length) {
-    const temFiltro = STATE.filtroMovMesDe || STATE.filtroMovMesAte || STATE.filtroMovPessoa;
+    const temFiltro = STATE.filtroMovMesDe || STATE.filtroMovMesAte || STATE.filtroMovPessoa
+      || STATE.filtroMovBanco || STATE.filtroMovTipoConta || STATE.filtroMovRevisado;
     body.innerHTML = `<tr><td colspan="7" class="empty">${temFiltro ? "Nenhuma movimentação com esse filtro." : "Nenhuma movimentação registrada ainda."}</td></tr>`;
   } else {
-    body.innerHTML = filtradas.map((m) => (
-      `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
-      `<td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}${m.descricaoCompra ? `<span class="sublabel">${esc(m.descricaoCompra)}</span>` : ""}</td>` +
-      `<td><span class="badge-tipo ${m.tipo}">${m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : "")}</span></td>` +
-      `<td>${esc(m.categoria)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
-      `<td><span class="stamp ${m.pago ? "pago" : "pendente"}" data-alternar-pagamento="${m.id}" data-novo-pago="${!m.pago}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
-    )).join("");
+    body.innerHTML = filtradas.map((m) => {
+      const aRevisar = m.origem === "Open Finance" && m.revisado !== true;
+      const sublabels = [
+        m.descricaoCompra,
+        m.instituicao ? `🏦 ${m.instituicao}${m.contaTipo === "cartao" ? " (cartão)" : ""}` : "",
+        m.descricaoOrigem
+      ].filter(Boolean).map((s) => `<span class="sublabel">${esc(s)}</span>`).join("");
+      return (
+        `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
+        `<td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}${aRevisar ? ' <span class="stamp revisar">A REVISAR</span>' : ""}${sublabels}</td>` +
+        `<td><span class="badge-tipo ${m.tipo}">${m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : "")}</span></td>` +
+        `<td>${esc(m.categoria)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
+        `<td><span class="stamp ${m.pago ? "pago" : "pendente"}" data-alternar-pagamento="${m.id}" data-novo-pago="${!m.pago}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
+      );
+    }).join("");
     document.querySelectorAll("[data-abrir-mov]").forEach((tr) => {
       tr.addEventListener("click", () => abrirModalMovimentacao(tr.dataset.abrirMov));
     });
@@ -1031,9 +1089,15 @@ async function sincronizarConexao(conexaoId) {
     const dataDe = formatarDataISO(de);
     const dataAte = formatarDataISO(hoje);
 
+    // "cartao" vem do type "CREDIT" que a Pluggy devolve pra cartão de
+    // crédito — é só uma etiqueta pra filtrar em Movimentações, não tem
+    // nenhuma relação com o cadastro manual de cartões (fatura, parcelas
+    // etc.) — são dois jeitos independentes de registrar gasto no cartão.
     let todasTransacoes = [];
     for (const conta of contas) {
+      const contaTipo = conta.type === "CREDIT" ? "cartao" : "banco";
       const respTrans = await chamarProxyPluggy({ action: "listTransactions", accountId: conta.id, from: dataDe, to: dataAte });
+      (respTrans.transactions || []).forEach((t) => { t._contaTipo = contaTipo; });
       todasTransacoes = todasTransacoes.concat(respTrans.transactions || []);
     }
 
@@ -1062,7 +1126,9 @@ async function sincronizarConexao(conexaoId) {
       batch.set(movRef, {
         lancamentoId, data: String(t.date || dataAte).slice(0, 10), valor: Math.abs(arredondar2(valor)), pago: true,
         responsavel: "", origem: "Open Finance", cartaoId: null, compraParceladaId: null,
-        pluggyTransactionId: t.id, createdAt: serverTimestamp()
+        pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
+        contaTipo: t._contaTipo || "banco", revisado: false, descricaoOrigem: t.description || t.descriptionRaw || "",
+        createdAt: serverTimestamp()
       });
     });
     batch.update(doc(db, "conexoesBancarias", conexaoId), { ultimaSincronizacao: serverTimestamp(), status: "conectado" });
@@ -1357,6 +1423,19 @@ function abrirModalMovimentacao(id) {
   document.getElementById("edit-mov-valor").value = mov.valor;
   document.getElementById("edit-mov-pago").value = mov.pago ? "true" : "false";
   garantirOpcaoPessoa("edit-mov-responsavel", mov.responsavel || "");
+
+  const infoEl = document.getElementById("edit-mov-info");
+  if (mov.origem === "Open Finance") {
+    const partes = [`Importada do banco ${mov.instituicao || ""}`.trim()];
+    if (mov.descricaoOrigem) partes.push(`descrição original: "${mov.descricaoOrigem}"`);
+    partes.push(mov.revisado === true ? "já revisada." : "escolha o lançamento certo abaixo pra dizer do que se trata.");
+    infoEl.textContent = partes.join(" — ");
+    infoEl.classList.remove("hidden");
+  } else {
+    infoEl.textContent = "";
+    infoEl.classList.add("hidden");
+  }
+
   document.getElementById("modal-editar-mov").classList.add("active");
 }
 function fecharModalMovimentacao() {
@@ -1400,8 +1479,15 @@ document.getElementById("btn-salvar-edicao-mov").addEventListener("click", async
     return;
   }
 
+  const dadosAtualizar = { lancamentoId, data, valor, pago, responsavel };
+  // Abrir o modal e salvar já conta como "revisado" pra transações vindas
+  // do Open Finance — é o gesto de "olhei e disse do que se trata".
+  if (atual.origem === "Open Finance" && atual.revisado !== true) {
+    dadosAtualizar.revisado = true;
+  }
+
   try {
-    await updateDoc(doc(db, "movimentacoes", id), { lancamentoId, data, valor, pago, responsavel });
+    await updateDoc(doc(db, "movimentacoes", id), dadosAtualizar);
     for (const a of alteracoes) {
       await addDoc(collection(db, "historico"), {
         lancamentoId, nomeLancamento: nomeDepois, campo: a.campo,
@@ -2013,6 +2099,17 @@ function iniciarListeners() {
   onSnapshot(collection(db, "conexoesBancarias"), (snap) => {
     STATE.conexoesBancarias = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     renderConexoes();
+    renderMovimentacoes();
+    // Sincroniza cada conexão automaticamente uma vez por sessão (assim que
+    // o app abre), sem precisar clicar em "Sincronizar agora" — a guarda
+    // por Set evita loop, já que a própria sincronização reescreve o
+    // documento e dispara este listener de novo.
+    STATE.conexoesBancarias.forEach((c) => {
+      if (!conexoesAutoSincronizadasNestaSessao.has(c.id)) {
+        conexoesAutoSincronizadasNestaSessao.add(c.id);
+        sincronizarConexao(c.id);
+      }
+    });
   }, (err) => mostrarToast("Erro ao carregar conexões bancárias: " + err.message, true));
 
   onSnapshot(collection(db, "feriados"), (snap) => {

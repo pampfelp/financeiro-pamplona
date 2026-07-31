@@ -119,7 +119,6 @@ function acaoListTransactions_(accountId, from, to) {
   do {
     var url = PLUGGY_API_BASE + "/v2/transactions"
       + "?accountId=" + encodeURIComponent(accountId)
-      + "&pageSize=500"
       + (from ? "&dateFrom=" + encodeURIComponent(from) : "")
       + (to ? "&dateTo=" + encodeURIComponent(to) : "")
       + (after ? "&after=" + encodeURIComponent(after) : "");

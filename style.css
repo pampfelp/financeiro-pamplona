@@ -90,6 +90,7 @@ tbody tr.linha-clicavel{cursor:pointer;}
 .stamp.conectado{color:var(--credit);background:var(--credit-soft);}
 .stamp.erro{color:var(--debit);background:var(--debit-soft);}
 .stamp.reconexao{color:var(--warn);background:var(--warn-soft);}
+.stamp.revisar{color:var(--warn);background:var(--warn-soft);cursor:default;margin-left:6px;vertical-align:middle;}
 
 .badge-tipo{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:700;}
 .badge-tipo.Entrada{background:var(--credit-soft);color:var(--credit);}
