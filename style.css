@@ -166,6 +166,10 @@ tbody tr.linha-clicavel{cursor:pointer;}
 .conexao-card h3{font-family:var(--display);font-size:15px;font-weight:800;color:var(--ink);}
 .conexao-card .conexao-info{font-size:12px;color:var(--ink-soft);margin-bottom:12px;}
 .conexao-card .btn{width:100%;}
+.conexao-toggle{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-soft);font-weight:600;margin-bottom:12px;cursor:pointer;}
+.conexao-toggle input{width:15px;height:15px;cursor:pointer;flex:none;}
+.conexao-card.conexao-oculta{opacity:.55;}
+.conexao-card.conexao-oculta h3::after{content:" (oculto)";font-size:11px;font-weight:600;color:var(--ink-faint);}
 
 @media (max-width:640px){
   .planos-grid{grid-template-columns:1fr;}

@@ -122,6 +122,26 @@ function mapaLancamentos() {
   return m;
 }
 
+// "Filtro mestre" das conexões bancárias: cada conexão tem um interruptor
+// "Incluir no uso pessoal" (aba Conexões Bancárias). Uma conexão desligada
+// some do Dashboard e de Movimentações em todo o app — só volta a aparecer
+// religando o interruptor lá, não tem um jeito de "espiar" só numa tela.
+// Serve pra separar conta PJ compartilhada de uso pessoal, por exemplo.
+function conexoesAtivasParaPessoal() {
+  const set = new Set();
+  STATE.conexoesBancarias.forEach((c) => { if (c.ativoParaPessoal !== false) set.add(c.id); });
+  return set;
+}
+
+// Dado antigo do Open Finance sem "conexaoId" (importado antes desse campo
+// existir) fica visível por padrão — não escondemos algo sem saber de qual
+// banco veio, pra não sumir dado sem explicação.
+function movimentacaoVisivel(m, conexoesAtivas) {
+  if (m.origem !== "Open Finance") return true;
+  if (!m.conexaoId) return true;
+  return conexoesAtivas.has(m.conexaoId);
+}
+
 /* ══════════════ REGRAS DE NEGÓCIO (vindas do Code.gs original) ══════════════ */
 
 function ehDiaUtil(date, feriadosSet) {
@@ -208,7 +228,9 @@ function calcularDashboard() {
   let saidasPagasMes = 0;
   let parcelasCartaoFuturas = 0;
 
+  const conexoesAtivas = conexoesAtivasParaPessoal();
   STATE.movimentacoes.forEach((m) => {
+    if (!movimentacaoVisivel(m, conexoesAtivas)) return;
     const l = mapaLanc[m.lancamentoId] || {};
     const valor = Number(m.valor) || 0;
     const ehSaida = l.tipo === "Saida";
@@ -506,14 +528,17 @@ function renderMovimentacoes() {
   const mapaLanc = mapaLancamentos();
   const mapaCompra = {};
   STATE.comprasParceladas.forEach((c) => (mapaCompra[c.id] = c));
-  const enriquecidas = STATE.movimentacoes.map((m) => {
-    const l = mapaLanc[m.lancamentoId] || {};
-    const compra = m.compraParceladaId ? mapaCompra[m.compraParceladaId] : null;
-    return {
-      ...m, nomeLancamento: l.nome || "(excluído)", tipo: l.tipo || "", categoria: l.categoria || "",
-      descricaoCompra: compra ? compra.descricao : ""
-    };
-  });
+  const conexoesAtivas = conexoesAtivasParaPessoal();
+  const enriquecidas = STATE.movimentacoes
+    .filter((m) => movimentacaoVisivel(m, conexoesAtivas))
+    .map((m) => {
+      const l = mapaLanc[m.lancamentoId] || {};
+      const compra = m.compraParceladaId ? mapaCompra[m.compraParceladaId] : null;
+      return {
+        ...m, nomeLancamento: l.nome || "(excluído)", tipo: l.tipo || "", categoria: l.categoria || "",
+        descricaoCompra: compra ? compra.descricao : ""
+      };
+    });
 
   preencherFiltroPessoa(enriquecidas);
   preencherFiltroBanco(enriquecidas);
@@ -527,9 +552,12 @@ function renderMovimentacoes() {
   } else {
     body.innerHTML = filtradas.map((m) => {
       const aRevisar = m.origem === "Open Finance" && m.revisado !== true;
+      const rotuloBanco = m.instituicao
+        ? `🏦 ${m.instituicao}${m.contaTipo === "cartao" ? " (cartão)" : ""}`
+        : (m.origem === "Open Finance" ? "🏦 Banco não identificado (sincronizado antes do rastreamento por banco)" : "");
       const sublabels = [
         m.descricaoCompra,
-        m.instituicao ? `🏦 ${m.instituicao}${m.contaTipo === "cartao" ? " (cartão)" : ""}` : "",
+        rotuloBanco,
         m.descricaoOrigem
       ].filter(Boolean).map((s) => `<span class="sublabel">${esc(s)}</span>`).join("");
       return (
@@ -1039,16 +1067,27 @@ function renderConexoes() {
     const statusClasse = c.status === "conectado" ? "conectado" : (c.status === "reconexao_necessaria" ? "reconexao" : "erro");
     const statusTexto = c.status === "conectado" ? "CONECTADO" : (c.status === "reconexao_necessaria" ? "RECONEXÃO NECESSÁRIA" : "ERRO");
     const ultimaSinc = c.ultimaSincronizacao ? fmtDataHora(c.ultimaSincronizacao) : "nunca sincronizado";
+    const incluido = c.ativoParaPessoal !== false;
     return (
-      `<div class="conexao-card">` +
+      `<div class="conexao-card${incluido ? "" : " conexao-oculta"}">` +
       `<div class="conexao-topo"><h3>${esc(c.instituicao || "Banco")}</h3><span class="stamp ${statusClasse}">${statusTexto}</span></div>` +
       `<div class="conexao-info">Última sincronização: ${esc(ultimaSinc)}</div>` +
+      `<label class="conexao-toggle"><input type="checkbox" data-alternar-inclusao-pessoal="${c.id}" data-novo-valor="${!incluido}" ${incluido ? "checked" : ""}> Incluir no uso pessoal (Dashboard e Movimentações)</label>` +
       `<button class="btn btn-primary" data-sincronizar-conexao="${c.id}">🔄 Sincronizar agora</button>` +
       `</div>`
     );
   }).join("");
   grid.querySelectorAll("[data-sincronizar-conexao]").forEach((btn) => {
     btn.addEventListener("click", () => sincronizarConexao(btn.dataset.sincronizarConexao));
+  });
+  grid.querySelectorAll("[data-alternar-inclusao-pessoal]").forEach((chk) => {
+    chk.addEventListener("change", async () => {
+      try {
+        await updateDoc(doc(db, "conexoesBancarias", chk.dataset.alternarInclusaoPessoal), { ativoParaPessoal: chk.dataset.novoValor === "true" });
+      } catch (err) {
+        mostrarToast("Não foi possível salvar: " + err.message, true);
+      }
+    });
   });
 }
 
@@ -1160,7 +1199,8 @@ if (btnConectarBanco) {
             const item = (itemData && itemData.item) || {};
             const instituicao = (item.connector && item.connector.name) || "Banco conectado";
             const ref = await addDoc(collection(db, "conexoesBancarias"), {
-              itemId: item.id, instituicao, status: "conectado", ultimaSincronizacao: null, createdAt: serverTimestamp()
+              itemId: item.id, instituicao, status: "conectado", ultimaSincronizacao: null,
+              ativoParaPessoal: true, createdAt: serverTimestamp()
             });
             mostrarToast("Banco conectado! Importando as transações...");
             await sincronizarConexao(ref.id);
@@ -2100,6 +2140,7 @@ function iniciarListeners() {
     STATE.conexoesBancarias = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     renderConexoes();
     renderMovimentacoes();
+    renderDashboard();
     // Sincroniza cada conexão automaticamente uma vez por sessão (assim que
     // o app abre), sem precisar clicar em "Sincronizar agora" — a guarda
     // por Set evita loop, já que a própria sincronização reescreve o
