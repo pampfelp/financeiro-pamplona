@@ -610,6 +610,7 @@ function renderMovimentacoes() {
   } else {
     body.innerHTML = filtradas.map((m) => {
       const aRevisar = m.origem === "Open Finance" && m.revisado !== true;
+      const ehPrevisao = m.previsao === true;
       const colunaBanco = m.origem === "Open Finance"
         ? esc(m.instituicao || "não identificado") + (m.contaTipo === "cartao" ? '<span class="sublabel">cartão</span>' : "")
         : "—";
@@ -623,7 +624,7 @@ function renderMovimentacoes() {
       ].filter(Boolean).map((s) => `<span class="sublabel">${esc(s)}</span>`).join("");
       return (
         `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
-        `<td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}${aRevisar ? ' <span class="stamp revisar">A REVISAR</span>' : ""}${sublabels}</td>` +
+        `<td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}${aRevisar ? ' <span class="stamp revisar">A REVISAR</span>' : ""}${ehPrevisao ? ' <span class="stamp reconexao">PREVISÃO</span>' : ""}${sublabels}</td>` +
         `<td>${colunaBanco}</td>` +
         `<td><span class="badge-tipo ${m.tipo}">${m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : "")}</span></td>` +
         `<td>${esc(m.categoria)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
@@ -1249,6 +1250,71 @@ function encontrarPendenteParaConciliar(lancamentoId, dataTransacaoStr, pendente
   return melhor;
 }
 
+// Tira o "N/M" do final da descrição (ex: "SHOPEE *AGAUTO 12/12" vira
+// "SHOPEE *AGAUTO") — usado pra agrupar as parcelas da mesma compra, já
+// que a Pluggy não manda um identificador único de compra parcelada.
+function baseDescricaoParcela(descricao) {
+  // Bancos às vezes mandam a mesma compra com espaçamento diferente entre
+  // as parcelas (ex: "Shopee *Agauto 11/12" vs "SHOPEE      *AGAUTO
+  // 12/12") — colapsa espaços múltiplos em um só antes de comparar, senão
+  // o agrupamento não reconhece que é a mesma compra.
+  return String(descricao || "")
+    .replace(/\s*\d{1,2}\s*\/\s*\d{1,2}\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+// Chave que agrupa todas as parcelas da MESMA compra parcelada: mesma
+// conta + mesma descrição-base + mesmo valor de parcela + mesmo total de
+// parcelas. Diferente de chaveCategorizador (que muda a cada parcela
+// porque o texto "N/M" muda).
+function chaveGrupoParcelamento(t, meta) {
+  const base = baseDescricaoParcela(t.description || t.descriptionRaw);
+  if (!base) return null;
+  return [t.accountId, base, Math.abs(arredondar2(Number(t.amount) || 0)), meta.totalInstallments].join("|");
+}
+
+// Procura uma "previsão" (parcela futura já criada por uma sincronização
+// anterior, ainda não confirmada pelo banco) que corresponda exatamente a
+// esse número de parcela dessa compra — é o caso mais preciso de
+// conciliação (usa o agrupamento de parcelamento, não o lançamento).
+function encontrarPrevisaoParaConciliar(grupoParcelamento, parcelaAtual, pendentesConsumidos) {
+  return STATE.movimentacoes.find((m) =>
+    m.previsao === true && m.grupoParcelamento === grupoParcelamento &&
+    m.parcelaAtual === parcelaAtual && !pendentesConsumidos.has(m.id)
+  ) || null;
+}
+
+// Gera as parcelas FUTURAS (ainda não pagas) de uma compra parcelada
+// detectada no Open Finance — o banco só manda a transação que já
+// aconteceu, então sem isso as parcelas seguintes nunca apareceriam em
+// Movimentações antes de acontecerem de verdade (diferente do cadastro
+// manual de cartão, que já cria todas de uma vez). Cada previsão vira uma
+// movimentação PENDENTE normal; quando a parcela real chegar num sync
+// futuro, encontrarPrevisaoParaConciliar() casa com ela em vez de duplicar.
+function gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, conexaoId, conexao, contaTipo, jaExistentesOuCriadas) {
+  const valorParcela = Math.abs(arredondar2(Number(t.amount) || 0));
+  const base = baseDescricaoParcela(t.description || t.descriptionRaw);
+  const dataBaseTransacao = parseDataLocal(String(t.date || "").slice(0, 10));
+  for (let n = meta.installmentNumber + 1; n <= meta.totalInstallments; n++) {
+    const marcador = grupoParcelamento + "#" + n;
+    if (jaExistentesOuCriadas.has(marcador)) continue;
+    jaExistentesOuCriadas.add(marcador);
+    const dataFutura = new Date(dataBaseTransacao);
+    dataFutura.setMonth(dataFutura.getMonth() + (n - meta.installmentNumber));
+    const movRef = doc(collection(db, "movimentacoes"));
+    batch.set(movRef, {
+      lancamentoId, data: formatarDataISO(dataFutura), valor: valorParcela, pago: false,
+      responsavel: "", origem: "Open Finance", cartaoId: null, compraParceladaId: null,
+      pluggyTransactionId: null, conexaoId, instituicao: conexao.instituicao || "Banco", contaTipo,
+      revisado: true, previsao: true, descricaoOrigem: `${base} ${n}/${meta.totalInstallments}`,
+      chaveCategorizador: null, grupoParcelamento, parcelaAtual: n, parcelaTotal: meta.totalInstallments,
+      valorTotalCompra: meta.totalAmount != null ? Number(meta.totalAmount) : null, createdAt: serverTimestamp()
+    });
+  }
+}
+
 // Cria ou atualiza o registro do cartão em cartoesOpenFinance a partir dos
 // dados que a própria Pluggy devolve pra uma conta type "CREDIT" — é só
 // leitura/espelho do banco, por isso não tem os campos de dia de
@@ -1328,46 +1394,90 @@ async function sincronizarConexao(conexaoId) {
     const mapaRegras = {};
     STATE.regrasCategorizacaoOF.forEach((r) => (mapaRegras[r.chave] = r.lancamentoId));
     const pendentesConsumidos = new Set();
+    // Marcadores "grupo#parcela" das previsões que já existem no banco de
+    // dados — evita recriar a mesma parcela futura a cada sincronização.
+    // Marca toda parcela (prevista OU já real) que já existe no banco de
+    // dados pra essa compra — cobre tanto "não recriar a mesma previsão
+    // de novo" quanto "não prever uma parcela que já chegou de verdade
+    // numa sincronização anterior".
+    const marcadoresParcelaExistentes = new Set();
+    STATE.movimentacoes.forEach((m) => {
+      if (m.grupoParcelamento && m.parcelaAtual != null) marcadoresParcelaExistentes.add(m.grupoParcelamento + "#" + m.parcelaAtual);
+    });
+    // Também marca as parcelas que já vêm como transação REAL nesta mesma
+    // sincronização — sem isso, se duas parcelas da mesma compra chegarem
+    // juntas (ex: depois de ficar muito tempo sem sincronizar), a mais
+    // antiga geraria uma previsão pra parcela que a mais nova já está
+    // trazendo de verdade, duplicando.
+    novas.forEach((t) => {
+      const m = t.creditCardMetadata;
+      if (m && m.installmentNumber != null && m.totalInstallments) {
+        const g = chaveGrupoParcelamento(t, m);
+        if (g) marcadoresParcelaExistentes.add(g + "#" + m.installmentNumber);
+      }
+    });
 
     let qtdAutoCategorizadas = 0;
     let qtdConciliadas = 0;
+    let qtdPrevisoesGeradas = 0;
     const batch = writeBatch(db);
     novas.forEach((t) => {
       const valor = Number(t.amount) || 0;
       const tipo = valor < 0 ? "Saida" : "Entrada";
       const chave = chaveCategorizador(t);
       const lancamentoIdRegra = chave ? mapaRegras[chave] : null;
-      const lancamentoId = lancamentoIdRegra || (tipo === "Saida" ? lancSaidaId : lancEntradaId);
-      if (lancamentoIdRegra) qtdAutoCategorizadas++;
 
       const meta = t.creditCardMetadata;
-      const dadosParcela = (meta && meta.installmentNumber != null) ? {
-        parcelaAtual: meta.installmentNumber, parcelaTotal: meta.totalInstallments || null,
+      const ehParcelaDeCartao = !!(meta && meta.installmentNumber != null && meta.totalInstallments);
+      const grupoParcelamento = ehParcelaDeCartao ? chaveGrupoParcelamento(t, meta) : null;
+      const dadosParcela = ehParcelaDeCartao ? {
+        parcelaAtual: meta.installmentNumber, parcelaTotal: meta.totalInstallments,
         valorTotalCompra: meta.totalAmount != null ? Number(meta.totalAmount) : null
       } : { parcelaAtual: null, parcelaTotal: null, valorTotalCompra: null };
 
       const dataTransacao = String(t.date || dataAte).slice(0, 10);
+
+      // Conciliação tem duas formas, da mais precisa pra mais genérica:
+      // 1) Essa parcela já tinha sido PREVISTA numa sincronização anterior
+      //    (mesmo grupo de compra + mesmo número de parcela) — casa exato.
+      // 2) Sem previsão, mas já existe uma regra pra esse estabelecimento —
+      //    procura um lançamento pendente (manual ou recorrente) do mesmo
+      //    lançamento, com data próxima (até 7 dias), e ATUALIZA ele em vez
+      //    de criar outro. Não exige valor igual de propósito — contas como
+      //    energia variam de mês a mês; o valor real do banco substitui o
+      //    estimado.
+      const previsaoCorrespondente = grupoParcelamento
+        ? encontrarPrevisaoParaConciliar(grupoParcelamento, meta.installmentNumber, pendentesConsumidos)
+        : null;
+      const pendente = previsaoCorrespondente || (lancamentoIdRegra
+        ? encontrarPendenteParaConciliar(lancamentoIdRegra, dataTransacao, pendentesConsumidos)
+        : null);
+      if (lancamentoIdRegra) qtdAutoCategorizadas++;
+
+      // Se veio de uma previsão, mantém o lançamento que ela já tinha
+      // (herdado da parcela anterior da mesma compra) — senão usa a regra
+      // ou cai no genérico de sempre.
+      const lancamentoId = (previsaoCorrespondente && previsaoCorrespondente.lancamentoId)
+        || lancamentoIdRegra || (tipo === "Saida" ? lancSaidaId : lancEntradaId);
+
+      // "Revisado" só quando já sabemos com confiança do que se trata: veio
+      // de uma previsão (herda a categorização já feita na parcela
+      // anterior), casou por regra aprendida, ou conciliou com algo que
+      // você mesmo já tinha categorizado na mão. Caindo no genérico (sem
+      // nenhum desses três), continua "A REVISAR" como sempre foi.
+      const jaCategorizadaComConfianca = !!(previsaoCorrespondente || lancamentoIdRegra || pendente);
+
       const dadosOpenFinance = {
         origem: "Open Finance", pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
-        contaTipo: t._contaTipo || "banco", revisado: true, descricaoOrigem: t.description || t.descriptionRaw || "",
-        chaveCategorizador: chave, ...dadosParcela
+        contaTipo: t._contaTipo || "banco", revisado: jaCategorizadaComConfianca, previsao: false, descricaoOrigem: t.description || t.descriptionRaw || "",
+        chaveCategorizador: chave, grupoParcelamento, ...dadosParcela
       };
-
-      // Conciliação: só tenta quando já existe regra (sem regra não dá pra
-      // saber com qual lançamento comparar) — procura um lançamento
-      // pendente (não pago, não vindo do banco ainda) do MESMO lançamento,
-      // com data próxima (até 7 dias), e ATUALIZA ele em vez de criar outro.
-      // Não exige valor igual de propósito — contas como energia variam de
-      // mês a mês, mas o valor certo (do banco) substitui o estimado.
-      const pendente = lancamentoIdRegra
-        ? encontrarPendenteParaConciliar(lancamentoIdRegra, dataTransacao, pendentesConsumidos)
-        : null;
 
       if (pendente) {
         pendentesConsumidos.add(pendente.id);
         qtdConciliadas++;
         batch.update(doc(db, "movimentacoes", pendente.id), {
-          pago: true, data: dataTransacao, valor: Math.abs(arredondar2(valor)), ...dadosOpenFinance
+          lancamentoId, pago: true, data: dataTransacao, valor: Math.abs(arredondar2(valor)), ...dadosOpenFinance
         });
       } else {
         const movRef = doc(collection(db, "movimentacoes"));
@@ -1378,12 +1488,21 @@ async function sincronizarConexao(conexaoId) {
           responsavel: "", cartaoId: null, compraParceladaId: null, ...dadosOpenFinance, createdAt: serverTimestamp()
         });
       }
+
+      // Compra parcelada com parcelas ainda por vir: gera as previstas que
+      // ainda não existem, pra aparecerem como PENDENTE em Movimentações
+      // já agora, em vez de só quando cada uma acontecer de verdade.
+      if (ehParcelaDeCartao && meta.totalInstallments > meta.installmentNumber) {
+        qtdPrevisoesGeradas += meta.totalInstallments - meta.installmentNumber;
+        gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, conexaoId, conexao, t._contaTipo || "cartao", marcadoresParcelaExistentes);
+      }
     });
     batch.update(doc(db, "conexoesBancarias", conexaoId), { ultimaSincronizacao: serverTimestamp(), status: "conectado" });
     await batch.commit();
     const partesResumo = [];
     if (qtdConciliadas) partesResumo.push(`${qtdConciliadas} conciliada(s) com lançamento(s) pendente(s)`);
     if (qtdAutoCategorizadas - qtdConciliadas > 0) partesResumo.push(`${qtdAutoCategorizadas - qtdConciliadas} categorizada(s) automaticamente por regra`);
+    if (qtdPrevisoesGeradas) partesResumo.push(`${qtdPrevisoesGeradas} parcela(s) futura(s) prevista(s)`);
     const sufixo = partesResumo.length ? ` (${partesResumo.join(", ")})` : "";
     mostrarToast(`${novas.length} transação(ões) importada(s) de ${conexao.instituicao || "banco"}${sufixo}. Recategorize em Movimentações se quiser.`);
   } catch (err) {
@@ -1679,10 +1798,16 @@ function abrirModalMovimentacao(id) {
 
   const infoEl = document.getElementById("edit-mov-info");
   if (mov.origem === "Open Finance") {
-    const partes = [`Importada do banco ${mov.instituicao || ""}`.trim()];
-    if (mov.descricaoOrigem) partes.push(`descrição original: "${mov.descricaoOrigem}"`);
+    const partes = [mov.previsao === true
+      ? `Previsão de parcela futura (${mov.instituicao || "banco"}) — ainda não aconteceu de verdade`
+      : `Importada do banco ${mov.instituicao || ""}`.trim()];
+    if (mov.descricaoOrigem) partes.push(`descrição${mov.previsao === true ? " estimada" : " original"}: "${mov.descricaoOrigem}"`);
     if (mov.parcelaAtual) partes.push(`parcela ${mov.parcelaAtual}${mov.parcelaTotal ? "/" + mov.parcelaTotal : ""}`);
-    partes.push(mov.revisado === true ? "já revisada." : "escolha o lançamento certo abaixo pra dizer do que se trata (a próxima transação parecida já entra categorizada sozinha).");
+    if (mov.previsao === true) {
+      partes.push("quando essa parcela realmente cair no banco, o sistema atualiza esta linha sozinho — não precisa apagar.");
+    } else {
+      partes.push(mov.revisado === true ? "já revisada." : "escolha o lançamento certo abaixo pra dizer do que se trata (a próxima transação parecida já entra categorizada sozinha).");
+    }
     infoEl.textContent = partes.join(" — ");
     infoEl.classList.remove("hidden");
   } else {
