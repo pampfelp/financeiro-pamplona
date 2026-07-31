@@ -116,7 +116,9 @@ const COLECOES = [
   { nome: "recorrentes", label: "Custos recorrentes", campos: ["lancamentoId", "valor", "dataInicio", "diaVencimento", "ativo", "ultimoMesLancado"] },
   { nome: "planos", label: "Planos", campos: ["icone", "nome", "descricao", "valorAlvo", "valorAcumulado", "aportePlanejadoMensal"] },
   { nome: "pessoas", label: "Pessoas", campos: ["nome"] },
-  { nome: "conexoesBancarias", label: "Conexões Bancárias", campos: ["itemId", "instituicao", "status", "ultimaSincronizacao"] },
+  { nome: "conexoesBancarias", label: "Conexões Bancárias", campos: ["itemId", "instituicao", "status", "ultimaSincronizacao", "ativoParaPessoal"] },
+  { nome: "cartoesOpenFinance", label: "Cartões (Open Finance)", campos: ["instituicao", "nome", "bandeira", "limiteTotal", "limiteUtilizado", "limiteDisponivel", "dataFechamento", "dataVencimento"] },
+  { nome: "regrasCategorizacaoOF", label: "Regras de Categorização", campos: ["chave", "lancamentoId", "descricaoExemplo"] },
   { nome: "historico", label: "Histórico", campos: ["lancamentoId", "nomeLancamento", "campo", "valorAnterior", "valorNovo", "tipoAlteracao"] },
   { nome: "config", label: "Configurações", campos: ["rendaMensal", "saldoInicial"] },
   { nome: "feriados", label: "Feriados", campos: ["data", "descricao"] }

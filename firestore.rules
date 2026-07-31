@@ -122,5 +122,26 @@ service cloud.firestore {
                     && request.resource.data.status is string;
       allow delete: if true;
     }
+
+    // Espelho só-leitura dos cartões de crédito descobertos via Open
+    // Finance (limite/utilizado/fatura vêm do banco a cada sincronização).
+    match /cartoesOpenFinance/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.accountId is string
+                    && request.resource.data.instituicao is string
+                    && request.resource.data.limiteTotal is number;
+      allow delete: if true;
+    }
+
+    // "Aprendizado" de categorização: uma chave (CNPJ do estabelecimento ou
+    // descrição) sempre aponta pro mesmo lançamento, aplicado
+    // automaticamente nas próximas sincronizações.
+    match /regrasCategorizacaoOF/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.chave is string
+                    && request.resource.data.chave.size() > 0
+                    && request.resource.data.lancamentoId is string;
+      allow delete: if true;
+    }
   }
 }

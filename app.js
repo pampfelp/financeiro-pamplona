@@ -27,6 +27,8 @@ const STATE = {
   planos: [],
   pessoas: [],
   conexoesBancarias: [],
+  cartoesOpenFinance: [],
+  regrasCategorizacaoOF: [],
   config: { rendaMensal: 0, saldoInicial: 0 },
   filtroMovMesDe: "",
   filtroMovMesAte: "",
@@ -604,21 +606,25 @@ function renderMovimentacoes() {
   if (!filtradas.length) {
     const temFiltro = STATE.filtroMovMesDe || STATE.filtroMovMesAte || STATE.filtroMovPessoa
       || STATE.filtroMovBanco || STATE.filtroMovTipoConta || STATE.filtroMovRevisado;
-    body.innerHTML = `<tr><td colspan="7" class="empty">${temFiltro ? "Nenhuma movimentação com esse filtro." : "Nenhuma movimentação registrada ainda."}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8" class="empty">${temFiltro ? "Nenhuma movimentação com esse filtro." : "Nenhuma movimentação registrada ainda."}</td></tr>`;
   } else {
     body.innerHTML = filtradas.map((m) => {
       const aRevisar = m.origem === "Open Finance" && m.revisado !== true;
-      const rotuloBanco = m.instituicao
-        ? `🏦 ${m.instituicao}${m.contaTipo === "cartao" ? " (cartão)" : ""}`
-        : (m.origem === "Open Finance" ? "🏦 Banco não identificado (sincronizado antes do rastreamento por banco)" : "");
+      const colunaBanco = m.origem === "Open Finance"
+        ? esc(m.instituicao || "não identificado") + (m.contaTipo === "cartao" ? '<span class="sublabel">cartão</span>' : "")
+        : "—";
+      const rotuloParcela = m.parcelaAtual
+        ? `Parcela ${m.parcelaAtual}${m.parcelaTotal ? "/" + m.parcelaTotal : ""}${m.valorTotalCompra ? ` (total ${moeda(m.valorTotalCompra)})` : ""}`
+        : "";
       const sublabels = [
         m.descricaoCompra,
-        rotuloBanco,
+        rotuloParcela,
         m.descricaoOrigem
       ].filter(Boolean).map((s) => `<span class="sublabel">${esc(s)}</span>`).join("");
       return (
         `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
         `<td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}${aRevisar ? ' <span class="stamp revisar">A REVISAR</span>' : ""}${sublabels}</td>` +
+        `<td>${colunaBanco}</td>` +
         `<td><span class="badge-tipo ${m.tipo}">${m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : "")}</span></td>` +
         `<td>${esc(m.categoria)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
         `<td><span class="stamp ${m.pago ? "pago" : "pendente"}" data-alternar-pagamento="${m.id}" data-novo-pago="${!m.pago}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
@@ -1147,6 +1153,34 @@ function renderConexoes() {
   });
 }
 
+// Cartões descobertos via Open Finance — só leitura (espelho do que o banco
+// reporta a cada sincronização). Diferente do cadastro manual de cartões
+// (aba "Cartão de Crédito" acima), aqui não existe dia de
+// fechamento/vencimento fixo escolhido pelo usuário nem controle de
+// parcelas feito pelo app — quem calcula tudo isso é o próprio banco.
+function renderCartoesOpenFinance() {
+  const grid = document.getElementById("cartoes-of-grid");
+  if (!grid) return;
+  if (!STATE.cartoesOpenFinance.length) {
+    grid.innerHTML = '<div class="empty">Nenhum cartão encontrado via Open Finance ainda — sincronize uma conexão bancária que tenha cartão de crédito.</div>';
+    return;
+  }
+  const ordenados = [...STATE.cartoesOpenFinance].sort((a, b) => (a.instituicao || "").localeCompare(b.instituicao || "", "pt-BR"));
+  grid.innerHTML = ordenados.map((c) => {
+    const pctUtilizado = c.limiteTotal > 0 ? Math.min(100, Math.max(0, (c.limiteUtilizado / c.limiteTotal) * 100)) : 0;
+    return (
+      `<div class="conexao-card">` +
+      `<div class="conexao-topo"><h3>${esc(c.instituicao)} — ${esc(c.nome)}</h3>${c.bandeira ? `<span class="badge-tipo Saida">${esc(c.bandeira)}</span>` : ""}</div>` +
+      `<div class="plano-progresso-barra"><div class="plano-progresso-fill" style="width:${pctUtilizado}%"></div></div>` +
+      `<div class="plano-progresso-legenda"><span class="pct">${pctUtilizado.toFixed(0)}% utilizado</span><span>${moeda(c.limiteUtilizado)} de ${moeda(c.limiteTotal)}</span></div>` +
+      `<div class="conexao-info" style="margin-top:10px;">Disponível: <strong>${moeda(c.limiteDisponivel)}</strong></div>` +
+      `<div class="conexao-info">Fechamento: ${c.dataFechamento ? dataBR(c.dataFechamento) : "não informado pelo banco"} · Vencimento: ${c.dataVencimento ? dataBR(c.dataVencimento) : "não informado pelo banco"}</div>` +
+      `<div class="conexao-info">Atualizado em: ${c.ultimaSincronizacao ? fmtDataHora(c.ultimaSincronizacao) : "—"}</div>` +
+      `</div>`
+    );
+  }).join("");
+}
+
 // Garante que existe um lançamento genérico "Importado do banco" pro tipo
 // pedido (Entrada ou Saída) — reaproveita se já existe um com esse nome E
 // esse tipo, senão cria. É pra onde vão transações importadas sem categoria
@@ -1164,6 +1198,57 @@ async function garantirLancamentoImportado(tipo) {
 // Busca contas + transações (últimos 90 dias) de uma conexão, ignora o que
 // já foi importado antes (dedupe por pluggyTransactionId) e grava o resto
 // em lote como movimentações normais.
+// Chave usada pra "lembrar" como uma transação foi categorizada da última
+// vez — prioriza o CNPJ do estabelecimento (mais confiável, quando a
+// Pluggy manda) e cai pra descrição normalizada quando não tem CNPJ (ex:
+// Pix, boleto). Ver garantirRegraCategorizacao() e a seção de regras.
+function chaveCategorizador(t) {
+  if (t.merchant && t.merchant.cnpj) return "cnpj:" + t.merchant.cnpj;
+  const desc = String(t.description || t.descriptionRaw || "").trim().toUpperCase();
+  return desc ? "desc:" + desc : null;
+}
+
+// Cria ou atualiza a regra "essa chave sempre vira esse lançamento" — chamado
+// tanto durante a sincronização (pra aplicar regras já existentes) quanto
+// quando o usuário categoriza manualmente uma transação importada (pra
+// aprender a regra nova). "descricaoExemplo" é só texto de apoio pra
+// reconhecer a regra depois na planilha administrativa.
+async function garantirRegraCategorizacao(chave, lancamentoId, descricaoExemplo) {
+  if (!chave || !lancamentoId) return;
+  const existente = STATE.regrasCategorizacaoOF.find((r) => r.chave === chave);
+  if (existente) {
+    if (existente.lancamentoId === lancamentoId) return;
+    await updateDoc(doc(db, "regrasCategorizacaoOF", existente.id), { lancamentoId, descricaoExemplo: descricaoExemplo || existente.descricaoExemplo, atualizadoEm: serverTimestamp() });
+  } else {
+    await addDoc(collection(db, "regrasCategorizacaoOF"), { chave, lancamentoId, descricaoExemplo: descricaoExemplo || "", atualizadoEm: serverTimestamp() });
+  }
+}
+
+// Cria ou atualiza o registro do cartão em cartoesOpenFinance a partir dos
+// dados que a própria Pluggy devolve pra uma conta type "CREDIT" — é só
+// leitura/espelho do banco, por isso não tem os campos de dia de
+// fechamento/vencimento fixos do cadastro manual de cartões (aqui a data
+// de fechamento/vencimento já vem calculada pelo banco a cada sincronização).
+async function sincronizarCartaoOpenFinance(conexaoId, conexao, conta) {
+  const cd = conta.creditData || {};
+  const limiteTotal = Number(cd.creditLimit) || 0;
+  const limiteUtilizado = Number(conta.balance) || 0;
+  const limiteDisponivel = cd.availableCreditLimit != null ? Number(cd.availableCreditLimit) : arredondar2(limiteTotal - limiteUtilizado);
+  const dados = {
+    conexaoId, instituicao: conexao.instituicao || "Banco", accountId: conta.id,
+    nome: conta.marketingName || conta.name || "Cartão", bandeira: cd.brand || "",
+    limiteTotal, limiteUtilizado, limiteDisponivel,
+    dataFechamento: cd.balanceCloseDate || null, dataVencimento: cd.balanceDueDate || null,
+    ultimaSincronizacao: serverTimestamp()
+  };
+  const existente = STATE.cartoesOpenFinance.find((c) => c.accountId === conta.id);
+  if (existente) {
+    await updateDoc(doc(db, "cartoesOpenFinance", existente.id), dados);
+  } else {
+    await addDoc(collection(db, "cartoesOpenFinance"), dados);
+  }
+}
+
 async function sincronizarConexao(conexaoId) {
   const conexao = STATE.conexoesBancarias.find((c) => c.id === conexaoId);
   if (!conexao) return mostrarToast("Conexão não encontrada.", true);
@@ -1176,6 +1261,12 @@ async function sincronizarConexao(conexaoId) {
       await updateDoc(doc(db, "conexoesBancarias", conexaoId), { ultimaSincronizacao: serverTimestamp(), status: "conectado" });
       mostrarToast("Nenhuma conta encontrada nesta conexão.");
       return;
+    }
+
+    // Cartões de crédito da conexão: atualiza limite/fatura ANTES das
+    // transações, independente de ter transação nova ou não.
+    for (const conta of contas) {
+      if (conta.type === "CREDIT") await sincronizarCartaoOpenFinance(conexaoId, conexao, conta);
     }
 
     const hoje = new Date();
@@ -1209,12 +1300,25 @@ async function sincronizarConexao(conexaoId) {
     // ter o ID deles na hora de gravar as movimentações.
     const lancEntradaId = await garantirLancamentoImportado("Entrada");
     const lancSaidaId = await garantirLancamentoImportado("Saida");
+    const mapaRegras = {};
+    STATE.regrasCategorizacaoOF.forEach((r) => (mapaRegras[r.chave] = r.lancamentoId));
 
+    let qtdAutoCategorizadas = 0;
     const batch = writeBatch(db);
     novas.forEach((t) => {
       const valor = Number(t.amount) || 0;
       const tipo = valor < 0 ? "Saida" : "Entrada";
-      const lancamentoId = tipo === "Saida" ? lancSaidaId : lancEntradaId;
+      const chave = chaveCategorizador(t);
+      const lancamentoIdRegra = chave ? mapaRegras[chave] : null;
+      const lancamentoId = lancamentoIdRegra || (tipo === "Saida" ? lancSaidaId : lancEntradaId);
+      if (lancamentoIdRegra) qtdAutoCategorizadas++;
+
+      const meta = t.creditCardMetadata;
+      const dadosParcela = (meta && meta.installmentNumber != null) ? {
+        parcelaAtual: meta.installmentNumber, parcelaTotal: meta.totalInstallments || null,
+        valorTotalCompra: meta.totalAmount != null ? Number(meta.totalAmount) : null
+      } : { parcelaAtual: null, parcelaTotal: null, valorTotalCompra: null };
+
       const movRef = doc(collection(db, "movimentacoes"));
       // Transação já aconteceu no extrato do banco, então entra como "paga"
       // — é histórico, não uma previsão.
@@ -1222,13 +1326,14 @@ async function sincronizarConexao(conexaoId) {
         lancamentoId, data: String(t.date || dataAte).slice(0, 10), valor: Math.abs(arredondar2(valor)), pago: true,
         responsavel: "", origem: "Open Finance", cartaoId: null, compraParceladaId: null,
         pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
-        contaTipo: t._contaTipo || "banco", revisado: false, descricaoOrigem: t.description || t.descriptionRaw || "",
-        createdAt: serverTimestamp()
+        contaTipo: t._contaTipo || "banco", revisado: !!lancamentoIdRegra, descricaoOrigem: t.description || t.descriptionRaw || "",
+        chaveCategorizador: chave, ...dadosParcela, createdAt: serverTimestamp()
       });
     });
     batch.update(doc(db, "conexoesBancarias", conexaoId), { ultimaSincronizacao: serverTimestamp(), status: "conectado" });
     await batch.commit();
-    mostrarToast(`${novas.length} transação(ões) importada(s) de ${conexao.instituicao || "banco"}. Recategorize em Movimentações se quiser.`);
+    const sufixoRegra = qtdAutoCategorizadas ? ` (${qtdAutoCategorizadas} já categorizada(s) automaticamente por regra)` : "";
+    mostrarToast(`${novas.length} transação(ões) importada(s) de ${conexao.instituicao || "banco"}${sufixoRegra}. Recategorize em Movimentações se quiser.`);
   } catch (err) {
     mostrarToast("Não foi possível sincronizar: " + err.message, true);
     try { await updateDoc(doc(db, "conexoesBancarias", conexaoId), { status: "erro" }); } catch (err2) { /* ignora falha secundária */ }
@@ -1524,7 +1629,8 @@ function abrirModalMovimentacao(id) {
   if (mov.origem === "Open Finance") {
     const partes = [`Importada do banco ${mov.instituicao || ""}`.trim()];
     if (mov.descricaoOrigem) partes.push(`descrição original: "${mov.descricaoOrigem}"`);
-    partes.push(mov.revisado === true ? "já revisada." : "escolha o lançamento certo abaixo pra dizer do que se trata.");
+    if (mov.parcelaAtual) partes.push(`parcela ${mov.parcelaAtual}${mov.parcelaTotal ? "/" + mov.parcelaTotal : ""}`);
+    partes.push(mov.revisado === true ? "já revisada." : "escolha o lançamento certo abaixo pra dizer do que se trata (a próxima transação parecida já entra categorizada sozinha).");
     infoEl.textContent = partes.join(" — ");
     infoEl.classList.remove("hidden");
   } else {
@@ -1590,6 +1696,13 @@ document.getElementById("btn-salvar-edicao-mov").addEventListener("click", async
         valorAnterior: String(a.antes), valorNovo: String(a.depois),
         tipoAlteracao: "Edição de movimentação", dataHora: serverTimestamp()
       });
+    }
+    // Se veio do Open Finance e o lançamento mudou, "aprende" a regra: da
+    // próxima vez que cair uma transação com essa mesma chave (CNPJ do
+    // estabelecimento, ou descrição quando não tem CNPJ), já entra
+    // categorizada sozinha.
+    if (atual.origem === "Open Finance" && atual.chaveCategorizador && atual.lancamentoId !== lancamentoId) {
+      await garantirRegraCategorizacao(atual.chaveCategorizador, lancamentoId, atual.descricaoOrigem);
     }
     mostrarToast(`Movimentação atualizada (${alteracoes.length} campo(s) alterado(s)).`);
     fecharModalMovimentacao();
@@ -2208,6 +2321,15 @@ function iniciarListeners() {
       }
     });
   }, (err) => mostrarToast("Erro ao carregar conexões bancárias: " + err.message, true));
+
+  onSnapshot(collection(db, "cartoesOpenFinance"), (snap) => {
+    STATE.cartoesOpenFinance = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderCartoesOpenFinance();
+  }, (err) => mostrarToast("Erro ao carregar cartões (Open Finance): " + err.message, true));
+
+  onSnapshot(collection(db, "regrasCategorizacaoOF"), (snap) => {
+    STATE.regrasCategorizacaoOF = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }, (err) => mostrarToast("Erro ao carregar regras de categorização: " + err.message, true));
 
   onSnapshot(collection(db, "feriados"), (snap) => {
     STATE.feriados = snap.docs.map((d) => ({ id: d.id, ...d.data() }));

@@ -151,8 +151,8 @@
       </div>
       <div class="kpi-grid" id="mov-kpi-grid" style="margin-top:16px;"></div>
       <table>
-        <thead><tr><th>Data</th><th>Lançamento</th><th>Tipo</th><th>Categoria</th><th>Quem comprou</th><th>Valor</th><th>Situação</th></tr></thead>
-        <tbody id="movs-body"><tr><td colspan="7" class="empty">Carregando…</td></tr></tbody>
+        <thead><tr><th>Data</th><th>Lançamento</th><th>Banco</th><th>Tipo</th><th>Categoria</th><th>Quem comprou</th><th>Valor</th><th>Situação</th></tr></thead>
+        <tbody id="movs-body"><tr><td colspan="8" class="empty">Carregando…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -201,6 +201,15 @@
       <p class="view-desc">Cadastre seus cartões e lance aqui as compras feitas <strong>no crédito</strong> (à vista no cartão ou parceladas). O primeiro indicador abaixo mostra o valor total que você precisa separar do seu salário este mês para pagar a fatura.</p>
     </div></header>
     <div class="kpi-grid" id="cartao-kpi-grid"></div>
+
+    <div class="card">
+      <h2>🏦 Cartões via Open Finance</h2>
+      <p class="hint" style="margin-top:0;">Cartões descobertos automaticamente nas suas conexões bancárias (aba "Conexões Bancárias") — limite, utilizado e disponível vêm direto do banco a cada sincronização. Isto é só leitura, diferente do cadastro manual abaixo.</p>
+      <div class="conexoes-grid" id="cartoes-of-grid">
+        <div class="empty">Carregando…</div>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Novo cartão</h2>
       <div class="row">
