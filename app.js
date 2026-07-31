@@ -555,15 +555,29 @@ document.getElementById("mov-filtro-revisado").addEventListener("change", (e) =>
   renderMovimentacoes();
 });
 
+// Separa por tipo (Entrada/Saída) ANTES de separar por pago/não pago — uma
+// entrada não paga é dinheiro a RECEBER, não a pagar (são fluxos opostos,
+// misturar os dois num "a pagar" só não fazia sentido). Segue a mesma regra
+// do calcularDashboard(): só conta como saída quando o tipo é
+// exatamente "Saida"; qualquer outra coisa (Entrada, ou lançamento
+// excluído) cai do lado de "receber".
 function renderMovKpis(filtradas) {
-  let totalPago = 0, totalNaoPago = 0, qtdPago = 0, qtdNaoPago = 0;
+  let totalPago = 0, qtdPago = 0, totalRecebido = 0, qtdRecebido = 0;
+  let totalAPagar = 0, qtdAPagar = 0, totalAReceber = 0, qtdAReceber = 0;
   filtradas.forEach((m) => {
-    if (m.pago) { totalPago += Number(m.valor) || 0; qtdPago++; }
-    else { totalNaoPago += Number(m.valor) || 0; qtdNaoPago++; }
+    const valor = Number(m.valor) || 0;
+    const ehSaida = m.tipo === "Saida";
+    if (m.pago) {
+      if (ehSaida) { totalPago += valor; qtdPago++; } else { totalRecebido += valor; qtdRecebido++; }
+    } else {
+      if (ehSaida) { totalAPagar += valor; qtdAPagar++; } else { totalAReceber += valor; qtdAReceber++; }
+    }
   });
   document.getElementById("mov-kpi-grid").innerHTML =
     kpiCard("Pago no período", moeda(totalPago) + ` <small>(${qtdPago})</small>`, true) +
-    kpiCard("A pagar no período", moeda(totalNaoPago) + ` <small>(${qtdNaoPago})</small>`, totalNaoPago === 0);
+    kpiCard("Recebido no período", moeda(totalRecebido) + ` <small>(${qtdRecebido})</small>`, true) +
+    kpiCard("A pagar no período", moeda(totalAPagar) + ` <small>(${qtdAPagar})</small>`, totalAPagar === 0) +
+    kpiCard("A receber no período", moeda(totalAReceber) + ` <small>(${qtdAReceber})</small>`, totalAReceber === 0);
 }
 
 function renderMovimentacoes() {
@@ -2214,12 +2228,9 @@ document.getElementById("mov-data").valueAsDate = new Date();
 document.getElementById("rec-inicio").valueAsDate = new Date();
 document.getElementById("compra-data").valueAsDate = new Date();
 
-const hojeInicial = new Date();
-const mesInicial = `${hojeInicial.getFullYear()}-${String(hojeInicial.getMonth() + 1).padStart(2, "0")}`;
-document.getElementById("mov-filtro-mes-de").value = mesInicial;
-document.getElementById("mov-filtro-mes-ate").value = mesInicial;
-STATE.filtroMovMesDe = mesInicial;
-STATE.filtroMovMesAte = mesInicial;
+// "De"/"Até" começam vazios de propósito (mostra tudo por padrão) — se um
+// deles viesse pré-preenchido com o mês atual, usar só o outro campo
+// filtraria sem querer num intervalo de dois lados em vez de um só.
 
 iniciarBuscaLancamento();
 iniciarListeners();
