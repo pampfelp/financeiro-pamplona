@@ -337,7 +337,7 @@ function preencherCategorias() {
 }
 
 const CAMPOS_BUSCA_LANCAMENTO = [
-  "mov-lancamento", "rec-lancamento", "compra-lancamento", "edit-mov-lancamento", "edit-rec-lancamento", "edit-compra-lancamento",
+  "edit-mov-lancamento", "edit-rec-lancamento", "edit-compra-lancamento",
   "qa-mov-lancamento", "qa-compra-lancamento", "qa-rec-lancamento"
 ];
 
@@ -347,10 +347,13 @@ function rotuloLancamento(l) {
 
 // Cada campo "Lançamento" é, por baixo dos panos, um <input type="hidden">
 // com o MESMO id que o <select> antigo tinha — todo o resto do código
-// (leituras de .value, validações) continua funcionando sem mudar nada.
-// O que aparece pra digitar é um <input type="text"> com sufixo "-busca",
-// filtrado por um <datalist>. Esta função escreve nos dois: o hidden (ID)
-// e o texto visível (rótulo), a partir de um lancamentoId.
+// (leituras de .value, validações) continua funcionando sem mudar nada. O
+// que aparece pra digitar é um <input type="text"> com sufixo "-busca",
+// com uma lista de opções própria (".combo-dropdown", não um <datalist>
+// nativo — no Chrome do Android o datalist vira uma sugestão em cima do
+// teclado em vez de uma lista de verdade, o que confundia mais do que
+// ajudava). Esta função escreve nos dois: o hidden (ID) e o texto visível
+// (rótulo), a partir de um lancamentoId.
 function definirComboLancamento(id, lancamentoId) {
   const hidden = document.getElementById(id);
   const busca = document.getElementById(id + "-busca");
@@ -359,28 +362,68 @@ function definirComboLancamento(id, lancamentoId) {
   if (busca) busca.value = l ? rotuloLancamento(l) : "";
 }
 
-// Liga cada campo de busca ao hidden correspondente — só precisa rodar uma
-// vez (não a cada render), senão os listeners se acumulariam.
+// Desenha as opções do dropdown de um campo de busca, filtradas pelo termo
+// digitado (contém, sem diferenciar maiúsculas/minúsculas).
+function renderOpcoesCombo(id, termo) {
+  const dropdown = document.getElementById("dd-" + id);
+  if (!dropdown) return;
+  const alvo = (termo || "").trim().toLowerCase();
+  const opcoes = STATE.lancamentos
+    .filter((l) => !alvo || rotuloLancamento(l).toLowerCase().includes(alvo))
+    .sort((a, b) => rotuloLancamento(a).localeCompare(rotuloLancamento(b), "pt-BR"));
+  dropdown.innerHTML = opcoes.length
+    ? opcoes.map((l) => `<div class="combo-opcao" data-id="${l.id}">${esc(rotuloLancamento(l))}</div>`).join("")
+    : '<div class="combo-vazio">Nenhum lançamento encontrado.</div>';
+}
+
+// Liga cada campo de busca ao seu dropdown e ao hidden correspondente — só
+// precisa rodar uma vez (não a cada render), senão os listeners se
+// acumulariam. Ao focar, o campo esvazia e mostra TODAS as opções (em vez
+// de exigir apagar o texto já selecionado pra ver as outras); ao digitar,
+// filtra a lista; ao escolher uma opção, grava no hidden e fecha; ao sair
+// sem escolher nada, volta a mostrar o que já estava selecionado.
 function iniciarBuscaLancamento() {
   CAMPOS_BUSCA_LANCAMENTO.forEach((id) => {
     const busca = document.getElementById(id + "-busca");
-    if (!busca) return;
+    const hidden = document.getElementById(id);
+    const dropdown = document.getElementById("dd-" + id);
+    if (!busca || !hidden || !dropdown) return;
+
+    busca.addEventListener("focus", () => {
+      busca.value = "";
+      renderOpcoesCombo(id, "");
+      dropdown.classList.add("active");
+    });
     busca.addEventListener("input", () => {
-      const alvo = STATE.lancamentos.find((l) => rotuloLancamento(l) === busca.value);
-      document.getElementById(id).value = alvo ? alvo.id : "";
+      renderOpcoesCombo(id, busca.value);
+      dropdown.classList.add("active");
+    });
+    // "mousedown" (não "click") + preventDefault: dispara antes do "blur"
+    // do campo de texto, então a seleção acontece sem o dropdown já ter
+    // fechado o campo por trás.
+    dropdown.addEventListener("mousedown", (e) => {
+      const opcao = e.target.closest(".combo-opcao");
+      if (!opcao) return;
+      e.preventDefault();
+      definirComboLancamento(id, opcao.dataset.id);
+      dropdown.classList.remove("active");
+    });
+    busca.addEventListener("blur", () => {
+      setTimeout(() => {
+        dropdown.classList.remove("active");
+        const l = STATE.lancamentos.find((x) => x.id === hidden.value);
+        busca.value = l ? rotuloLancamento(l) : "";
+      }, 150);
     });
   });
 }
 
 function preencherSelectsLancamento() {
-  const datalistHtml = STATE.lancamentos.map((l) => `<option value="${esc(rotuloLancamento(l))}">`).join("");
   const mapaPorId = mapaLancamentos();
 
   CAMPOS_BUSCA_LANCAMENTO.forEach((id) => {
     const hidden = document.getElementById(id);
     const busca = document.getElementById(id + "-busca");
-    const datalist = document.getElementById("dl-" + id);
-    if (datalist) datalist.innerHTML = datalistHtml;
 
     if (pendingSelecaoLancamento && pendingSelecaoLancamento.selectId === id && mapaPorId[pendingSelecaoLancamento.lancamentoId]) {
       definirComboLancamento(id, pendingSelecaoLancamento.lancamentoId);
@@ -441,7 +484,7 @@ document.getElementById("btn-salvar-novo-lancamento").addEventListener("click", 
 function preencherSelectsPessoa() {
   const opcoes = '<option value="">— Não informado —</option>' +
     STATE.pessoas.map((p) => `<option value="${esc(p.nome)}">${esc(p.nome)}</option>`).join("");
-  ["mov-responsavel", "compra-responsavel", "edit-mov-responsavel", "edit-compra-responsavel", "qa-mov-responsavel", "qa-compra-responsavel"].forEach((id) => {
+  ["edit-mov-responsavel", "edit-compra-responsavel", "qa-mov-responsavel", "qa-compra-responsavel"].forEach((id) => {
     const sel = document.getElementById(id);
     const valorAtual = sel.value;
     sel.innerHTML = opcoes;
@@ -867,7 +910,7 @@ function preencherSelectCartoes() {
     `<option value="${c.id}">🏦 ${esc(c.instituicao)} — ${esc(c.nome)} (disponível ${moeda(c.limiteDisponivel)})</option>`
   )).join("");
   const opcoes = opcoesManuais + opcoesOpenFinance;
-  ["compra-cartao", "edit-compra-cartao", "qa-compra-cartao"].forEach((id) => {
+  ["edit-compra-cartao", "qa-compra-cartao"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!STATE.cartoes.length && !STATE.cartoesOpenFinance.length) {
       sel.innerHTML = '<option value="">Cadastre um cartão primeiro</option>';
@@ -1317,19 +1360,70 @@ function chaveCategorizador(t) {
   return desc ? "desc:" + desc : null;
 }
 
+// Pix pessoa-física não tem CNPJ, então a "chave" cai pra descrição — que é
+// sempre a mesma pro mesmo destinatário (ex: "Pix enviado Paola..."), não
+// importa se foi academia, Uber ou qualquer outra coisa. Pra não categorizar
+// tudo igual, uma regra de descrição ("desc:") só é aplicada se o valor da
+// transação bater (com tolerância) com o valor que ensinou a regra —
+// permitindo várias regras pra mesma pessoa, uma por "motivo" típico.
+// Regras de CNPJ (loja/estabelecimento) continuam valendo pra qualquer
+// valor, como sempre — lá o CNPJ já é sinal suficiente.
+function valorDentroDaTolerancia(valorReferencia, valor) {
+  if (valorReferencia == null) return true;
+  const margem = Math.max(5, Math.abs(valorReferencia) * 0.2);
+  return Math.abs(Math.abs(Number(valor) || 0) - Math.abs(valorReferencia)) <= margem;
+}
+
+// Acha a regra aplicável pra essa chave+valor (usado durante a
+// sincronização pra decidir se categoriza sozinho ou deixa "a revisar").
+function encontrarRegraAplicavel(chave, valor) {
+  if (!chave) return null;
+  const candidatas = STATE.regrasCategorizacaoOF.filter((r) => r.chave === chave);
+  if (!candidatas.length) return null;
+  if (chave.startsWith("cnpj:")) return candidatas[0];
+  const matchPorValor = candidatas.find((r) => r.valorReferencia != null && valorDentroDaTolerancia(r.valorReferencia, valor));
+  if (matchPorValor) return matchPorValor;
+  // Regra "curinga" (sem valorReferencia, de antes dessa checagem de valor
+  // existir) — só confia nela se for a ÚNICA regra que essa chave já teve,
+  // ou seja, nunca apareceu ambiguidade real (outro motivo/valor) ainda.
+  if (candidatas.length === 1 && candidatas[0].valorReferencia == null) return candidatas[0];
+  return null;
+}
+
 // Cria ou atualiza a regra "essa chave sempre vira esse lançamento" — chamado
-// tanto durante a sincronização (pra aplicar regras já existentes) quanto
 // quando o usuário categoriza manualmente uma transação importada (pra
 // aprender a regra nova). "descricaoExemplo" é só texto de apoio pra
-// reconhecer a regra depois na planilha administrativa.
-async function garantirRegraCategorizacao(chave, lancamentoId, descricaoExemplo) {
+// reconhecer a regra depois na planilha administrativa. "valor" (pra chaves
+// de descrição/Pix) vira o "valor típico" que identifica esse motivo
+// específico — sem ele, qualquer Pix pra mesma pessoa cairia na mesma regra.
+async function garantirRegraCategorizacao(chave, lancamentoId, descricaoExemplo, valor) {
   if (!chave || !lancamentoId) return;
-  const existente = STATE.regrasCategorizacaoOF.find((r) => r.chave === chave);
+  const ehCnpj = chave.startsWith("cnpj:");
+  const valorReferencia = ehCnpj ? null : arredondar2(Math.abs(Number(valor) || 0));
+  const candidatas = STATE.regrasCategorizacaoOF.filter((r) => r.chave === chave);
+  const existente = ehCnpj
+    ? candidatas[0]
+    : candidatas.find((r) => r.valorReferencia != null && valorDentroDaTolerancia(r.valorReferencia, valorReferencia));
   if (existente) {
-    if (existente.lancamentoId === lancamentoId) return;
-    await updateDoc(doc(db, "regrasCategorizacaoOF", existente.id), { lancamentoId, descricaoExemplo: descricaoExemplo || existente.descricaoExemplo, atualizadoEm: serverTimestamp() });
-  } else {
-    await addDoc(collection(db, "regrasCategorizacaoOF"), { chave, lancamentoId, descricaoExemplo: descricaoExemplo || "", atualizadoEm: serverTimestamp() });
+    if (existente.lancamentoId === lancamentoId && existente.valorReferencia === valorReferencia) return;
+    await updateDoc(doc(db, "regrasCategorizacaoOF", existente.id), { lancamentoId, valorReferencia, descricaoExemplo: descricaoExemplo || existente.descricaoExemplo, atualizadoEm: serverTimestamp() });
+    return;
+  }
+  await addDoc(collection(db, "regrasCategorizacaoOF"), { chave, lancamentoId, valorReferencia, descricaoExemplo: descricaoExemplo || "", atualizadoEm: serverTimestamp() });
+  // Se já existia(m) regra(s) "curinga" pra essa mesma chave (de antes dessa
+  // checagem de valor existir), faz backfill do valor típico delas usando o
+  // histórico — assim o motivo que já funcionava certo antes (ex: Academia
+  // sempre ~R$80) continua sendo categorizado sozinho depois que a
+  // ambiguidade é descoberta, em vez de virar "a revisar" à toa.
+  if (!ehCnpj) {
+    const curingas = candidatas.filter((r) => r.valorReferencia == null && r.lancamentoId !== lancamentoId);
+    for (const r of curingas) {
+      const historico = STATE.movimentacoes.filter((m) => m.chaveCategorizador === chave && m.lancamentoId === r.lancamentoId);
+      if (historico.length) {
+        const media = arredondar2(historico.reduce((s, m) => s + Math.abs(Number(m.valor) || 0), 0) / historico.length);
+        await updateDoc(doc(db, "regrasCategorizacaoOF", r.id), { valorReferencia: media, atualizadoEm: serverTimestamp() });
+      }
+    }
   }
 }
 
@@ -1685,8 +1779,6 @@ async function sincronizarConexao(conexaoId) {
     // ter o ID deles na hora de gravar as movimentações.
     const lancEntradaId = await garantirLancamentoImportado("Entrada");
     const lancSaidaId = await garantirLancamentoImportado("Saida");
-    const mapaRegras = {};
-    STATE.regrasCategorizacaoOF.forEach((r) => (mapaRegras[r.chave] = r.lancamentoId));
     const pendentesConsumidos = new Set();
     // Marcadores "grupo#parcela" das previsões que já existem no banco de
     // dados — evita recriar a mesma parcela futura a cada sincronização.
@@ -1726,7 +1818,8 @@ async function sincronizarConexao(conexaoId) {
       // vir sem o campo "type".
       const tipo = t.type ? (t.type === "CREDIT" ? "Entrada" : "Saida") : (valor < 0 ? "Saida" : "Entrada");
       const chave = chaveCategorizador(t);
-      const lancamentoIdRegra = chave ? mapaRegras[chave] : null;
+      const regraAplicavel = chave ? encontrarRegraAplicavel(chave, valor) : null;
+      const lancamentoIdRegra = regraAplicavel ? regraAplicavel.lancamentoId : null;
 
       const meta = t.creditCardMetadata;
       const ehParcelaDeCartao = !!(meta && meta.installmentNumber != null && meta.totalInstallments);
@@ -2001,20 +2094,7 @@ function renderDashboard() {
 
 /* ══════════════ LANÇAMENTOS ══════════════ */
 
-document.getElementById("btn-add-lancamento").addEventListener("click", async () => {
-  const nome = document.getElementById("lanc-nome").value.trim();
-  const tipo = document.getElementById("lanc-tipo").value;
-  const categoria = document.getElementById("lanc-categoria").value.trim();
-  if (!nome || !categoria) return mostrarToast("Preencha nome e categoria.", true);
-  try {
-    await addDoc(collection(db, "lancamentos"), { nome, tipo, categoria, createdAt: serverTimestamp() });
-    mostrarToast("Lançamento cadastrado!");
-    document.getElementById("lanc-nome").value = "";
-    document.getElementById("lanc-categoria").value = "";
-  } catch (err) {
-    mostrarToast("Não foi possível salvar: " + err.message, true);
-  }
-});
+document.getElementById("btn-novo-lancamento-tela").addEventListener("click", () => abrirModalNovoLancamento());
 
 function abrirModalEdicaoLancamento(id) {
   const lanc = STATE.lancamentos.find((l) => l.id === id);
@@ -2090,19 +2170,7 @@ async function criarMovimentacao({ lancamentoId, data, valor, pago, responsavel 
   }
 }
 
-document.getElementById("btn-add-movimentacao").addEventListener("click", async () => {
-  const ok = await criarMovimentacao({
-    lancamentoId: document.getElementById("mov-lancamento").value,
-    data: document.getElementById("mov-data").value,
-    valor: Number(document.getElementById("mov-valor").value),
-    pago: document.getElementById("mov-pago").value === "true",
-    responsavel: document.getElementById("mov-responsavel").value.trim()
-  });
-  if (ok) {
-    document.getElementById("mov-valor").value = "";
-    document.getElementById("mov-responsavel").value = "";
-  }
-});
+document.getElementById("btn-nova-movimentacao").addEventListener("click", () => abrirModalAcaoRapida("movimentacao"));
 
 async function alternarPagamento(id, novoPago) {
   try {
@@ -2208,7 +2276,7 @@ document.getElementById("btn-salvar-edicao-mov").addEventListener("click", async
     // estabelecimento, ou descrição quando não tem CNPJ), já entra
     // categorizada sozinha.
     if (atual.origem === "Open Finance" && atual.chaveCategorizador && atual.lancamentoId !== lancamentoId) {
-      await garantirRegraCategorizacao(atual.chaveCategorizador, lancamentoId, atual.descricaoOrigem);
+      await garantirRegraCategorizacao(atual.chaveCategorizador, lancamentoId, atual.descricaoOrigem, valor);
     }
     mostrarToast(`Movimentação atualizada (${alteracoes.length} campo(s) alterado(s)).`);
     fecharModalMovimentacao();
@@ -2240,6 +2308,20 @@ document.getElementById("btn-excluir-mov").addEventListener("click", async () =>
 
 /* ══════════════ CARTÃO DE CRÉDITO ══════════════ */
 
+function abrirModalNovoCartao() {
+  ["cartao-nome", "cartao-limite", "cartao-fechamento", "cartao-vencimento"].forEach((id) => (document.getElementById(id).value = ""));
+  document.getElementById("modal-novo-cartao").classList.add("active");
+}
+function fecharModalNovoCartao() {
+  document.getElementById("modal-novo-cartao").classList.remove("active");
+}
+document.getElementById("btn-novo-cartao-tela").addEventListener("click", abrirModalNovoCartao);
+document.getElementById("btn-cancelar-novo-cartao").addEventListener("click", fecharModalNovoCartao);
+document.getElementById("modal-novo-cartao").addEventListener("click", (e) => {
+  if (e.target.id === "modal-novo-cartao") fecharModalNovoCartao();
+});
+document.getElementById("btn-nova-compra-parcelada").addEventListener("click", () => abrirModalAcaoRapida("compra"));
+
 document.getElementById("btn-add-cartao").addEventListener("click", async () => {
   const nome = document.getElementById("cartao-nome").value.trim();
   const limiteTotal = Number(document.getElementById("cartao-limite").value);
@@ -2252,7 +2334,7 @@ document.getElementById("btn-add-cartao").addEventListener("click", async () => 
   try {
     await addDoc(collection(db, "cartoes"), { nome, limiteTotal, diaFechamento, diaVencimento, ativo: true, createdAt: serverTimestamp() });
     mostrarToast("Cartão cadastrado!");
-    ["cartao-nome", "cartao-limite", "cartao-fechamento", "cartao-vencimento"].forEach((id) => (document.getElementById(id).value = ""));
+    fecharModalNovoCartao();
   } catch (err) {
     mostrarToast("Não foi possível salvar: " + err.message, true);
   }
@@ -2332,24 +2414,6 @@ async function criarCompraParcelada({ cartaoId, lancamentoId, descricao, respons
   }
 }
 
-document.getElementById("btn-add-compra").addEventListener("click", async () => {
-  const ok = await criarCompraParcelada({
-    cartaoId: document.getElementById("compra-cartao").value,
-    lancamentoId: document.getElementById("compra-lancamento").value,
-    descricao: document.getElementById("compra-descricao").value.trim(),
-    responsavel: document.getElementById("compra-responsavel").value.trim(),
-    valorTotal: Number(document.getElementById("compra-valor").value),
-    numParcelas: Number(document.getElementById("compra-parcelas").value),
-    dataCompra: document.getElementById("compra-data").value
-  });
-  if (ok) {
-    document.getElementById("compra-descricao").value = "";
-    document.getElementById("compra-responsavel").value = "";
-    document.getElementById("compra-valor").value = "";
-    document.getElementById("compra-parcelas").value = "1";
-  }
-});
-
 /* ══════════════ AÇÃO RÁPIDA (botão + na barra inferior) ══════════════ */
 
 document.querySelectorAll("#qa-tabs .qa-tab").forEach((btn) => {
@@ -2361,13 +2425,18 @@ document.querySelectorAll("#qa-tabs .qa-tab").forEach((btn) => {
   });
 });
 
-function abrirModalAcaoRapida() {
+// "tipoInicial" deixa a aba certa já selecionada quando o botão de "+" de
+// uma tela específica (Movimentações, Cartão, Recorrentes) abre este modal
+// — "movimentacao" é o padrão, usado pelo botão flutuante genérico.
+function abrirModalAcaoRapida(tipoInicial) {
   preencherSelectsLancamento();
   preencherSelectsPessoa();
   preencherSelectCartoes();
 
-  document.querySelectorAll("#qa-tabs .qa-tab").forEach((b, i) => b.classList.toggle("active", i === 0));
-  document.querySelectorAll(".qa-form").forEach((f, i) => f.classList.toggle("hidden", i !== 0));
+  const tipos = ["movimentacao", "compra", "recorrente"];
+  const indiceInicial = Math.max(0, tipos.indexOf(tipoInicial));
+  document.querySelectorAll("#qa-tabs .qa-tab").forEach((b, i) => b.classList.toggle("active", i === indiceInicial));
+  document.querySelectorAll(".qa-form").forEach((f, i) => f.classList.toggle("hidden", i !== indiceInicial));
 
   document.getElementById("qa-mov-data").valueAsDate = new Date();
   document.getElementById("qa-mov-valor").value = "";
@@ -2389,7 +2458,7 @@ function abrirModalAcaoRapida() {
 function fecharModalAcaoRapida() {
   document.getElementById("modal-acao-rapida").classList.remove("active");
 }
-document.getElementById("btn-acao-rapida").addEventListener("click", abrirModalAcaoRapida);
+document.getElementById("btn-acao-rapida").addEventListener("click", () => abrirModalAcaoRapida());
 document.getElementById("btn-cancelar-acao-rapida").addEventListener("click", fecharModalAcaoRapida);
 document.getElementById("modal-acao-rapida").addEventListener("click", (e) => {
   if (e.target.id === "modal-acao-rapida") fecharModalAcaoRapida();
@@ -2461,15 +2530,7 @@ async function criarRecorrente({ lancamentoId, valor, dataInicio, diaVencimento,
   }
 }
 
-document.getElementById("btn-add-recorrente").addEventListener("click", () => {
-  criarRecorrente({
-    lancamentoId: document.getElementById("rec-lancamento").value,
-    valor: Number(document.getElementById("rec-valor").value),
-    dataInicio: document.getElementById("rec-inicio").value,
-    diaVencimento: Number(document.getElementById("rec-dia").value),
-    ativo: document.getElementById("rec-ativo").value === "true"
-  });
-});
+document.getElementById("btn-novo-recorrente-tela").addEventListener("click", () => abrirModalAcaoRapida("recorrente"));
 
 async function alternarAtivoRecorrente(id, novoAtivo) {
   try {
@@ -2874,10 +2935,6 @@ function iniciarListeners() {
 }
 
 /* ══════════════ INÍCIO ══════════════ */
-
-document.getElementById("mov-data").valueAsDate = new Date();
-document.getElementById("rec-inicio").valueAsDate = new Date();
-document.getElementById("compra-data").valueAsDate = new Date();
 
 // "De"/"Até" começam vazios de propósito (mostra tudo por padrão) — se um
 // deles viesse pré-preenchido com o mês atual, usar só o outro campo

@@ -129,6 +129,12 @@ tbody tr.linha-clicavel{cursor:pointer;}
 .select-add input[type="text"]:focus{outline:none;border-color:var(--roxo);}
 .btn-add-inline{flex:none;width:40px;border-radius:9px;border:1.5px solid var(--roxo);background:var(--accent-soft);color:var(--roxo);font-weight:800;font-size:17px;cursor:pointer;line-height:1;}
 .btn-add-inline:hover{background:var(--roxo);color:#fff;}
+.combo-wrap{position:relative;flex:1;min-width:0;}
+.combo-dropdown{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:240px;overflow-y:auto;background:var(--panel);border:1.5px solid var(--line);border-radius:9px;box-shadow:0 10px 28px rgba(27,51,88,.16);z-index:80;}
+.combo-dropdown.active{display:block;}
+.combo-opcao{padding:9px 12px;font-size:13.5px;color:var(--ink);cursor:pointer;}
+.combo-opcao:hover{background:var(--accent-soft);}
+.combo-vazio{padding:9px 12px;font-size:13px;color:var(--ink-soft);}
 
 .planos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;}
 

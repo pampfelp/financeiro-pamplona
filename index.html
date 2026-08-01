@@ -73,45 +73,9 @@
   <section id="view-movimentacoes" class="view">
     <header class="top"><div><h1>Movimentações</h1>
       <p class="view-desc">Use esta aba para lançar valores <strong>à vista</strong> (dinheiro, Pix, débito) — entradas e saídas que não passam pelo cartão de crédito. Compras no cartão são lançadas na aba "Cartão de Crédito".</p>
-    </div></header>
-    <div class="card">
-      <h2>Nova movimentação</h2>
-      <div class="row">
-        <div class="field">
-          <label>Lançamento</label>
-          <div class="select-add">
-            <input type="text" id="mov-lancamento-busca" list="dl-mov-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-            <datalist id="dl-mov-lancamento"></datalist>
-            <input type="hidden" id="mov-lancamento">
-            <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="mov-lancamento" title="Cadastrar novo lançamento">+</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>Data</label>
-          <input type="date" id="mov-data">
-        </div>
-        <div class="field">
-          <label>Valor (R$)</label>
-          <input type="number" step="0.01" id="mov-valor" placeholder="0,00">
-        </div>
-        <div class="field">
-          <label>Quem comprou</label>
-          <div class="select-add">
-            <select id="mov-responsavel"><option value="">— Não informado —</option></select>
-            <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="mov-responsavel" title="Cadastrar nova pessoa">+</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>Situação</label>
-          <select id="mov-pago">
-            <option value="false">Não pago</option>
-            <option value="true">Pago</option>
-          </select>
-        </div>
-        <button class="btn btn-primary" id="btn-add-movimentacao">Adicionar</button>
-      </div>
-      <p class="hint">Não achou o lançamento? Use o botão "+" ao lado do campo.</p>
     </div>
+    <div class="top-actions"><button class="btn btn-primary" id="btn-nova-movimentacao">+ Nova movimentação</button></div>
+    </header>
 
     <div class="card">
       <h2>Movimentações cadastradas</h2>
@@ -173,29 +137,10 @@
   <section id="view-lancamentos" class="view">
     <header class="top"><div><h1>Lançamentos</h1>
       <p class="view-desc">Aqui você cadastra os "nomes" que vão aparecer nos campos de seleção das outras abas (ex: Salário, Aluguel, Mercado). Cada lançamento define se é Entrada ou Saída e a categoria — é o que organiza os relatórios. Cadastre um lançamento antes de registrar a movimentação em si.</p>
-    </div></header>
-    <div class="card">
-      <h2>Novo lançamento</h2>
-      <div class="row">
-        <div class="field">
-          <label>Nome</label>
-          <input type="text" id="lanc-nome" placeholder="Ex: Salário, Aluguel, Mercado...">
-        </div>
-        <div class="field">
-          <label>Tipo</label>
-          <select id="lanc-tipo">
-            <option value="Entrada">Entrada</option>
-            <option value="Saida">Saída</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Categoria</label>
-          <input type="text" id="lanc-categoria" list="lista-categorias" placeholder="Ex: Moradia, Lazer, Renda..." autocomplete="off">
-          <datalist id="lista-categorias"></datalist>
-        </div>
-        <button class="btn btn-primary" id="btn-add-lancamento">Cadastrar</button>
-      </div>
     </div>
+    <div class="top-actions"><button class="btn btn-primary" id="btn-novo-lancamento-tela">+ Novo lançamento</button></div>
+    </header>
+    <datalist id="lista-categorias"></datalist>
 
     <div class="card">
       <h2>Lançamentos cadastrados</h2>
@@ -211,7 +156,12 @@
   <section id="view-cartao" class="view">
     <header class="top"><div><h1>Cartão de Crédito</h1>
       <p class="view-desc">Cadastre seus cartões e lance aqui as compras feitas <strong>no crédito</strong> (à vista no cartão ou parceladas). O primeiro indicador abaixo mostra o valor total que você precisa separar do seu salário este mês para pagar a fatura.</p>
-    </div></header>
+    </div>
+    <div class="top-actions">
+      <button class="btn" id="btn-novo-cartao-tela">+ Novo cartão manual</button>
+      <button class="btn btn-primary" id="btn-nova-compra-parcelada">+ Nova compra parcelada</button>
+    </div>
+    </header>
     <div class="kpi-grid" id="cartao-kpi-grid"></div>
 
     <div class="card">
@@ -223,81 +173,12 @@
     </div>
 
     <div class="card">
-      <h2>Novo cartão</h2>
-      <div class="row">
-        <div class="field">
-          <label>Nome do cartão</label>
-          <input type="text" id="cartao-nome" placeholder="Ex: Nubank, Inter...">
-        </div>
-        <div class="field">
-          <label>Limite total (R$)</label>
-          <input type="number" step="0.01" id="cartao-limite">
-        </div>
-        <div class="field">
-          <label>Dia de fechamento</label>
-          <input type="number" min="1" max="31" id="cartao-fechamento" placeholder="Ex: 20">
-        </div>
-        <div class="field">
-          <label>Dia de vencimento</label>
-          <input type="number" min="1" max="31" id="cartao-vencimento" placeholder="Ex: 28">
-        </div>
-        <button class="btn btn-primary" id="btn-add-cartao">Cadastrar</button>
-      </div>
-    </div>
-
-    <div class="card">
       <h2>Cartões cadastrados</h2>
       <p class="hint" style="margin-top:0;">Clique numa linha para editar o cartão.</p>
       <table>
         <thead><tr><th>Cartão</th><th>Limite total</th><th>Utilizado</th><th>Disponível</th><th>Fatura deste mês</th><th>Fecha</th><th>Vence</th><th>Ativo</th></tr></thead>
         <tbody id="cartoes-body"><tr><td colspan="8" class="empty">Carregando…</td></tr></tbody>
       </table>
-    </div>
-
-    <div class="card">
-      <h2>Nova compra parcelada</h2>
-      <div class="row">
-        <div class="field">
-          <label>Cartão</label>
-          <select id="compra-cartao"></select>
-        </div>
-        <div class="field">
-          <label>Lançamento</label>
-          <div class="select-add">
-            <input type="text" id="compra-lancamento-busca" list="dl-compra-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-            <datalist id="dl-compra-lancamento"></datalist>
-            <input type="hidden" id="compra-lancamento">
-            <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="compra-lancamento" title="Cadastrar novo lançamento">+</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>Descrição</label>
-          <input type="text" id="compra-descricao" placeholder="Ex: Notebook, Geladeira...">
-        </div>
-        <div class="field">
-          <label>Quem comprou</label>
-          <div class="select-add">
-            <select id="compra-responsavel"><option value="">— Não informado —</option></select>
-            <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="compra-responsavel" title="Cadastrar nova pessoa">+</button>
-          </div>
-        </div>
-      </div>
-      <div class="row" style="margin-top:10px;">
-        <div class="field">
-          <label>Valor total (R$)</label>
-          <input type="number" step="0.01" id="compra-valor">
-        </div>
-        <div class="field">
-          <label>Nº de parcelas</label>
-          <input type="number" min="1" max="60" id="compra-parcelas" value="1">
-        </div>
-        <div class="field">
-          <label>Data da compra</label>
-          <input type="date" id="compra-data">
-        </div>
-        <button class="btn btn-primary" id="btn-add-compra">Lançar compra</button>
-      </div>
-      <p class="hint">Ao lançar, todas as parcelas já são criadas em Movimentações, com vencimento calculado a partir do fechamento/vencimento do cartão escolhido.</p>
     </div>
 
     <div class="card">
@@ -336,42 +217,10 @@
   <section id="view-recorrentes" class="view">
     <header class="top"><div><h1>Custos Recorrentes</h1>
       <p class="view-desc">Cadastre aqui gastos que se repetem todo mês (aluguel, assinaturas, mensalidades). O sistema lança automaticamente a movimentação do mês em "Movimentações" quando alguém abre o app depois da virada do mês.</p>
-    </div></header>
-    <div class="kpi-grid" id="rec-kpi-grid"></div>
-    <div class="card">
-      <h2>Novo custo recorrente</h2>
-      <div class="row">
-        <div class="field">
-          <label>Lançamento</label>
-          <div class="select-add">
-            <input type="text" id="rec-lancamento-busca" list="dl-rec-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-            <datalist id="dl-rec-lancamento"></datalist>
-            <input type="hidden" id="rec-lancamento">
-            <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="rec-lancamento" title="Cadastrar novo lançamento">+</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>Valor (R$)</label>
-          <input type="number" step="0.01" id="rec-valor">
-        </div>
-        <div class="field">
-          <label>Data início</label>
-          <input type="date" id="rec-inicio">
-        </div>
-        <div class="field">
-          <label>Dia vencimento</label>
-          <input type="number" min="1" max="31" id="rec-dia">
-        </div>
-        <div class="field">
-          <label>Ativo</label>
-          <select id="rec-ativo">
-            <option value="true">Sim</option>
-            <option value="false">Não</option>
-          </select>
-        </div>
-        <button class="btn btn-primary" id="btn-add-recorrente">Adicionar</button>
-      </div>
     </div>
+    <div class="top-actions"><button class="btn btn-primary" id="btn-novo-recorrente-tela">+ Novo custo recorrente</button></div>
+    </header>
+    <div class="kpi-grid" id="rec-kpi-grid"></div>
 
     <div class="card">
       <h2>Custos recorrentes</h2>
@@ -472,8 +321,10 @@
     <div class="field" style="margin-top:14px;">
       <label>Lançamento</label>
       <div class="select-add">
-        <input type="text" id="edit-mov-lancamento-busca" list="dl-edit-mov-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-        <datalist id="dl-edit-mov-lancamento"></datalist>
+        <div class="combo-wrap">
+          <input type="text" id="edit-mov-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
+          <div class="combo-dropdown" id="dd-edit-mov-lancamento"></div>
+        </div>
         <input type="hidden" id="edit-mov-lancamento">
         <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-mov-lancamento" title="Cadastrar novo lançamento">+</button>
       </div>
@@ -537,6 +388,32 @@
 </div>
 
 <!-- MODAL: editar/excluir cartão -->
+<div class="modal-overlay" id="modal-novo-cartao">
+  <div class="modal-box">
+    <h2>Novo cartão</h2>
+    <div class="field" style="margin-top:14px;">
+      <label>Nome do cartão</label>
+      <input type="text" id="cartao-nome" placeholder="Ex: Nubank, Inter...">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Limite total (R$)</label>
+      <input type="number" step="0.01" id="cartao-limite">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Dia de fechamento</label>
+      <input type="number" min="1" max="31" id="cartao-fechamento" placeholder="Ex: 20">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Dia de vencimento</label>
+      <input type="number" min="1" max="31" id="cartao-vencimento" placeholder="Ex: 28">
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:18px;">
+      <button class="btn" id="btn-cancelar-novo-cartao">Cancelar</button>
+      <button class="btn btn-primary" id="btn-add-cartao">Cadastrar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-editar-cartao">
   <div class="modal-box">
     <h2>Editar cartão</h2>
@@ -603,8 +480,10 @@
     <div class="field" style="margin-top:14px;">
       <label>Lançamento</label>
       <div class="select-add">
-        <input type="text" id="edit-rec-lancamento-busca" list="dl-edit-rec-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-        <datalist id="dl-edit-rec-lancamento"></datalist>
+        <div class="combo-wrap">
+          <input type="text" id="edit-rec-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
+          <div class="combo-dropdown" id="dd-edit-rec-lancamento"></div>
+        </div>
         <input type="hidden" id="edit-rec-lancamento">
         <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-rec-lancamento" title="Cadastrar novo lançamento">+</button>
       </div>
@@ -652,8 +531,10 @@
       <div class="field">
         <label>Lançamento</label>
         <div class="select-add">
-          <input type="text" id="edit-compra-lancamento-busca" list="dl-edit-compra-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-          <datalist id="dl-edit-compra-lancamento"></datalist>
+          <div class="combo-wrap">
+            <input type="text" id="edit-compra-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
+            <div class="combo-dropdown" id="dd-edit-compra-lancamento"></div>
+          </div>
           <input type="hidden" id="edit-compra-lancamento">
           <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-compra-lancamento" title="Cadastrar novo lançamento">+</button>
         </div>
@@ -807,8 +688,10 @@
       <div class="field" style="margin-top:14px;">
         <label>Lançamento</label>
         <div class="select-add">
-          <input type="text" id="qa-mov-lancamento-busca" list="dl-qa-mov-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-          <datalist id="dl-qa-mov-lancamento"></datalist>
+          <div class="combo-wrap">
+            <input type="text" id="qa-mov-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
+            <div class="combo-dropdown" id="dd-qa-mov-lancamento"></div>
+          </div>
           <input type="hidden" id="qa-mov-lancamento">
           <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="qa-mov-lancamento" title="Cadastrar novo lançamento">+</button>
         </div>
@@ -844,8 +727,10 @@
         <div class="field">
           <label>Lançamento</label>
           <div class="select-add">
-            <input type="text" id="qa-compra-lancamento-busca" list="dl-qa-compra-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-            <datalist id="dl-qa-compra-lancamento"></datalist>
+            <div class="combo-wrap">
+              <input type="text" id="qa-compra-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
+              <div class="combo-dropdown" id="dd-qa-compra-lancamento"></div>
+            </div>
             <input type="hidden" id="qa-compra-lancamento">
             <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="qa-compra-lancamento" title="Cadastrar novo lançamento">+</button>
           </div>
@@ -876,8 +761,10 @@
       <div class="field" style="margin-top:14px;">
         <label>Lançamento</label>
         <div class="select-add">
-          <input type="text" id="qa-rec-lancamento-busca" list="dl-qa-rec-lancamento" autocomplete="off" placeholder="Digite para buscar...">
-          <datalist id="dl-qa-rec-lancamento"></datalist>
+          <div class="combo-wrap">
+            <input type="text" id="qa-rec-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
+            <div class="combo-dropdown" id="dd-qa-rec-lancamento"></div>
+          </div>
           <input type="hidden" id="qa-rec-lancamento">
           <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="qa-rec-lancamento" title="Cadastrar novo lançamento">+</button>
         </div>
