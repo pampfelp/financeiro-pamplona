@@ -35,7 +35,9 @@ const STATE = {
   filtroMovPessoa: "",
   filtroMovBanco: "",
   filtroMovTipoConta: "",
-  filtroMovRevisado: ""
+  filtroMovRevisado: "",
+  filtroMovTipo: "",
+  buscaLivreMov: ""
 };
 
 // Evita sincronizar a mesma conexão bancária mais de uma vez por sessão —
@@ -122,6 +124,20 @@ function mapaLancamentos() {
   const m = {};
   STATE.lancamentos.forEach((l) => (m[l.id] = l));
   return m;
+}
+
+// Um cartão pode ser do cadastro manual (STATE.cartoes) OU descoberto via
+// Open Finance (STATE.cartoesOpenFinance) — os dois espaços de ID nunca
+// colidem (são de coleções diferentes do Firestore), então dá pra tratar
+// como um "cartaoId" só na hora de exibir/selecionar. Devolve null se não
+// achar em nenhum dos dois.
+function buscarCartaoUnificado(cartaoId) {
+  if (!cartaoId) return null;
+  const manual = STATE.cartoes.find((c) => c.id === cartaoId);
+  if (manual) return { ...manual, origemCartao: "manual", nomeExibicao: manual.nome };
+  const of = STATE.cartoesOpenFinance.find((c) => c.id === cartaoId);
+  if (of) return { ...of, origemCartao: "openFinance", nomeExibicao: `${of.instituicao} — ${of.nome}` };
+  return null;
 }
 
 // "Filtro mestre" das conexões bancárias: cada conexão tem um interruptor
@@ -513,6 +529,28 @@ function filtrarNaoRevisadas(lista) {
   return lista.filter((m) => m.origem === "Open Finance" && m.revisado !== true);
 }
 
+function filtrarPorTipo(lista) {
+  if (!STATE.filtroMovTipo) return lista;
+  return lista.filter((m) => m.tipo === STATE.filtroMovTipo);
+}
+
+// Um texto só, juntando tudo que aparece na linha (lançamento, banco,
+// tipo, categoria, quem comprou, valor, situação, descrição do banco,
+// parcela...) — é contra isso que a busca livre compara.
+function textoBuscavelMovimentacao(m) {
+  return [
+    m.nomeLancamento, m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : ""), m.categoria, m.responsavel,
+    m.instituicao, m.contaTipo === "cartao" ? "cartão" : "", m.descricaoOrigem, m.descricaoCompra,
+    m.pago ? "Pago" : "Pendente", moeda(m.valor), m.parcelaAtual ? `Parcela ${m.parcelaAtual}/${m.parcelaTotal || ""}` : ""
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function filtrarPorBuscaLivre(lista) {
+  const termo = STATE.buscaLivreMov.trim().toLowerCase();
+  if (!termo) return lista;
+  return lista.filter((m) => textoBuscavelMovimentacao(m).includes(termo));
+}
+
 // Opções do filtro vêm da união de "pessoas" cadastradas + qualquer nome
 // já usado em movimentações (cobre registros antigos com texto livre) —
 // assim ninguém some do filtro só porque não foi formalmente cadastrado.
@@ -554,6 +592,16 @@ document.getElementById("mov-filtro-tipo-conta").addEventListener("change", (e) 
 });
 document.getElementById("mov-filtro-revisado").addEventListener("change", (e) => {
   STATE.filtroMovRevisado = e.target.value;
+  renderMovimentacoes();
+});
+document.getElementById("mov-filtro-tipo").addEventListener("change", (e) => {
+  STATE.filtroMovTipo = e.target.value;
+  renderMovimentacoes();
+});
+// "input" (não "change") pra filtrar a cada letra digitada, sem precisar
+// sair do campo.
+document.getElementById("mov-busca-livre").addEventListener("input", (e) => {
+  STATE.buscaLivreMov = e.target.value;
   renderMovimentacoes();
 });
 
@@ -600,31 +648,49 @@ function renderMovimentacoes() {
 
   preencherFiltroPessoa(enriquecidas);
   preencherFiltroBanco(enriquecidas);
-  const filtradas = filtrarNaoRevisadas(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorMes(enriquecidas)))));
+  const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorMes(enriquecidas)))))));
 
   const body = document.getElementById("movs-body");
   if (!filtradas.length) {
     const temFiltro = STATE.filtroMovMesDe || STATE.filtroMovMesAte || STATE.filtroMovPessoa
-      || STATE.filtroMovBanco || STATE.filtroMovTipoConta || STATE.filtroMovRevisado;
+      || STATE.filtroMovBanco || STATE.filtroMovTipoConta || STATE.filtroMovRevisado
+      || STATE.filtroMovTipo || STATE.buscaLivreMov;
     body.innerHTML = `<tr><td colspan="8" class="empty">${temFiltro ? "Nenhuma movimentação com esse filtro." : "Nenhuma movimentação registrada ainda."}</td></tr>`;
   } else {
     body.innerHTML = filtradas.map((m) => {
       const aRevisar = m.origem === "Open Finance" && m.revisado !== true;
       const ehPrevisao = m.previsao === true;
-      const colunaBanco = m.origem === "Open Finance"
+      // Mostra o banco tanto pra transação já confirmada (origem "Open
+      // Finance") quanto pra compra parcelada lançada à mão num cartão
+      // Open Finance (que só tem "instituicao" preenchido, sem ainda ter
+      // vindo do banco de verdade).
+      const colunaBanco = (m.origem === "Open Finance" || m.instituicao)
         ? esc(m.instituicao || "não identificado") + (m.contaTipo === "cartao" ? '<span class="sublabel">cartão</span>' : "")
         : "—";
       const rotuloParcela = m.parcelaAtual
         ? `Parcela ${m.parcelaAtual}${m.parcelaTotal ? "/" + m.parcelaTotal : ""}${m.valorTotalCompra ? ` (total ${moeda(m.valorTotalCompra)})` : ""}`
         : "";
+      // Enquanto o lançamento ainda for o genérico "Importado do banco", a
+      // descrição de verdade que o banco mandou (ex: "Transferência
+      // recebida|Fulano de Tal") é mais útil de bater o olho do que o nome
+      // genérico — então ela vira a linha principal, e "Importado do
+      // banco" desce pra linha de baixo. Assim que você categoriza de
+      // verdade, o nome do lançamento escolhido volta a ser o principal.
+      const usaDescricaoComoTitulo = m.origem === "Open Finance" && !!m.descricaoOrigem && m.nomeLancamento === "Importado do banco";
+      const tituloPrincipal = usaDescricaoComoTitulo ? esc(m.descricaoOrigem) : esc(m.nomeLancamento);
+      const badgesNoTitulo = usaDescricaoComoTitulo ? "" : (
+        (aRevisar ? ' <span class="stamp revisar">A REVISAR</span>' : "") +
+        (ehPrevisao ? ' <span class="stamp reconexao">PREVISÃO</span>' : "")
+      );
       const sublabels = [
+        usaDescricaoComoTitulo ? `${m.nomeLancamento}${aRevisar ? " (a revisar)" : ""}` : "",
         m.descricaoCompra,
         rotuloParcela,
-        m.descricaoOrigem
+        usaDescricaoComoTitulo ? "" : m.descricaoOrigem
       ].filter(Boolean).map((s) => `<span class="sublabel">${esc(s)}</span>`).join("");
       return (
         `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
-        `<td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}${aRevisar ? ' <span class="stamp revisar">A REVISAR</span>' : ""}${ehPrevisao ? ' <span class="stamp reconexao">PREVISÃO</span>' : ""}${sublabels}</td>` +
+        `<td>${dataBR(m.data)}</td><td>${tituloPrincipal}${badgesNoTitulo}${sublabels}</td>` +
         `<td>${colunaBanco}</td>` +
         `<td><span class="badge-tipo ${m.tipo}">${m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : "")}</span></td>` +
         `<td>${esc(m.categoria)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
@@ -782,13 +848,20 @@ document.getElementById("btn-excluir-cartao").addEventListener("click", async ()
 });
 
 function preencherSelectCartoes() {
-  const opcoes = STATE.cartoes.map((c) => {
+  const opcoesManuais = STATE.cartoes.map((c) => {
     const disponivel = (Number(c.limiteTotal) || 0) - calcularLimiteUtilizado(c.id);
     return `<option value="${c.id}">${esc(c.nome)} (disponível ${moeda(disponivel)})</option>`;
   }).join("");
+  // Cartões via Open Finance também aparecem aqui — "disponível" vem direto
+  // do banco (limiteDisponivel), não é calculado somando movimentações
+  // como no cadastro manual.
+  const opcoesOpenFinance = STATE.cartoesOpenFinance.map((c) => (
+    `<option value="${c.id}">🏦 ${esc(c.instituicao)} — ${esc(c.nome)} (disponível ${moeda(c.limiteDisponivel)})</option>`
+  )).join("");
+  const opcoes = opcoesManuais + opcoesOpenFinance;
   ["compra-cartao", "edit-compra-cartao", "qa-compra-cartao"].forEach((id) => {
     const sel = document.getElementById(id);
-    if (!STATE.cartoes.length) {
+    if (!STATE.cartoes.length && !STATE.cartoesOpenFinance.length) {
       sel.innerHTML = '<option value="">Cadastre um cartão primeiro</option>';
       return;
     }
@@ -805,12 +878,14 @@ function preencherSelectCartoes() {
 function renderParcelasCartao() {
   const body = document.getElementById("parcelas-cartao-body");
   if (!body) return;
-  const mapaCartao = {};
-  STATE.cartoes.forEach((c) => (mapaCartao[c.id] = c));
   const mapaCompra = {};
   STATE.comprasParceladas.forEach((c) => (mapaCompra[c.id] = c));
 
-  const parcelas = STATE.movimentacoes.filter((m) => m.cartaoId);
+  // Cartão manual: linkado por cartaoId. Cartão Open Finance real (já
+  // sincronizado do banco): não tem cartaoId, é identificado por
+  // contaTipo "cartao" + conexaoId. As duas formas aparecem juntas aqui,
+  // pra dar visão completa do que está ocupando o limite de cada cartão.
+  const parcelas = STATE.movimentacoes.filter((m) => m.cartaoId || (m.contaTipo === "cartao" && m.conexaoId));
   if (!parcelas.length) {
     body.innerHTML = '<tr><td colspan="6" class="empty">Nenhum gasto lançado no cartão ainda.</td></tr>';
     return;
@@ -818,8 +893,10 @@ function renderParcelasCartao() {
   const ordenadas = [...parcelas].sort((a, b) => (a.data < b.data ? 1 : -1));
   body.innerHTML = ordenadas.map((m) => {
     const compra = mapaCompra[m.compraParceladaId];
-    const descricao = compra ? compra.descricao : "(compra excluída)";
-    const cartaoNome = (mapaCartao[m.cartaoId] || {}).nome || "(excluído)";
+    const descricao = compra ? compra.descricao : (m.descricaoOrigem || "(compra excluída)");
+    const cartaoNome = m.cartaoId
+      ? ((buscarCartaoUnificado(m.cartaoId) || {}).nomeExibicao || "(excluído)")
+      : `${m.instituicao || "Banco"} (Open Finance)`;
     return (
       `<tr class="linha-clicavel" data-abrir-mov="${m.id}"><td>${dataBR(m.data)}</td><td>${esc(descricao)}</td>` +
       `<td>${esc(cartaoNome)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
@@ -841,9 +918,6 @@ function renderParcelasCartao() {
 }
 
 function renderComprasParceladas() {
-  const mapaCartao = {};
-  STATE.cartoes.forEach((c) => (mapaCartao[c.id] = c));
-
   const body = document.getElementById("compras-body");
   if (!STATE.comprasParceladas.length) {
     body.innerHTML = '<tr><td colspan="7" class="empty">Nenhuma compra parcelada registrada ainda.</td></tr>';
@@ -860,7 +934,7 @@ function renderComprasParceladas() {
     const valorTotal = Number(c.valorTotal) || 0;
     const valorParcela = arredondar2(valorTotal / numParcelas);
     return (
-      `<tr class="linha-clicavel" data-abrir-compra="${c.id}"><td>${esc(c.descricao)}</td><td>${esc((mapaCartao[c.cartaoId] || {}).nome || "(excluído)")}</td><td>${esc(c.responsavel || "")}</td>` +
+      `<tr class="linha-clicavel" data-abrir-compra="${c.id}"><td>${esc(c.descricao)}</td><td>${esc((buscarCartaoUnificado(c.cartaoId) || {}).nomeExibicao || "(excluído)")}</td><td>${esc(c.responsavel || "")}</td>` +
       `<td class="num">${moeda(valorTotal)}</td><td>${numParcelas}x</td>` +
       `<td class="num">${moeda(valorParcela)}</td><td>${dataBR(c.dataCompra)}</td></tr>`
     );
@@ -888,13 +962,20 @@ function abrirModalEditarCompra(id) {
   const numParcelas = Number(c.numParcelas) || 1;
   const naoPagas = STATE.movimentacoes.filter((m) => m.compraParceladaId === id && m.pago !== true);
   const paidCount = numParcelas - naoPagas.length;
-  const travar = !naoPagas.length;
+  const cartaoAtual = buscarCartaoUnificado(c.cartaoId);
+  const ehCartaoOpenFinance = cartaoAtual && cartaoAtual.origemCartao === "openFinance";
+  // Recalcular cronograma (dia de fechamento, limite) só existe pro
+  // cadastro manual — cartão Open Finance trava esses campos sempre, não
+  // só quando já paga tudo.
+  const travar = !naoPagas.length || ehCartaoOpenFinance;
   ["edit-compra-cartao", "edit-compra-valor", "edit-compra-parcelas", "edit-compra-data"].forEach((elId) => {
     document.getElementById(elId).disabled = travar;
   });
-  document.getElementById("edit-compra-info").textContent = travar
-    ? "Todas as parcelas dessa compra já foram pagas — só descrição, lançamento e responsável ainda podem ser alterados."
-    : `${paidCount} de ${numParcelas} parcela(s) já paga(s). Mudar cartão, valor, nº de parcelas ou data recalcula automaticamente só as ${naoPagas.length} parcela(s) ainda não paga(s) — as pagas não são tocadas.`;
+  document.getElementById("edit-compra-info").textContent = ehCartaoOpenFinance
+    ? "Cartão via Open Finance — cartão, valor, parcelas e data não são editáveis aqui (esses dados vêm do banco). Só descrição, lançamento e responsável podem ser alterados."
+    : (travar
+      ? "Todas as parcelas dessa compra já foram pagas — só descrição, lançamento e responsável ainda podem ser alterados."
+      : `${paidCount} de ${numParcelas} parcela(s) já paga(s). Mudar cartão, valor, nº de parcelas ou data recalcula automaticamente só as ${naoPagas.length} parcela(s) ainda não paga(s) — as pagas não são tocadas.`);
   document.getElementById("modal-editar-compra").classList.add("active");
 }
 function fecharModalEditarCompra() {
@@ -924,8 +1005,14 @@ async function salvarEdicaoCompra(forcarRecalculo) {
 
   const atual = STATE.comprasParceladas.find((x) => x.id === id);
   if (!atual) return mostrarToast("Compra não encontrada.", true);
-  const cartao = STATE.cartoes.find((c) => c.id === cartaoId);
+  const cartao = buscarCartaoUnificado(cartaoId);
   if (!cartao) return mostrarToast("Cartão não encontrado.", true);
+  if (cartao.origemCartao === "openFinance") {
+    if (forcarRecalculo) return mostrarToast("Cartão via Open Finance não tem cronograma pra recalcular — quem controla isso é o próprio banco.", true);
+    // Cartão/valor/parcelas/data ficam desabilitados na tela pra esse caso,
+    // então só descrição/lançamento/responsável mudam — segue direto pro
+    // caminho "não afeta cronograma" mais abaixo.
+  }
 
   const parcelas = STATE.movimentacoes.filter((m) => m.compraParceladaId === id);
   const pagas = [...parcelas.filter((m) => m.pago === true)].sort((a, b) => (a.data < b.data ? -1 : 1));
@@ -1161,25 +1248,30 @@ function renderConexoes() {
 // parcelas feito pelo app — quem calcula tudo isso é o próprio banco.
 function renderCartoesOpenFinance() {
   const grid = document.getElementById("cartoes-of-grid");
-  if (!grid) return;
-  if (!STATE.cartoesOpenFinance.length) {
-    grid.innerHTML = '<div class="empty">Nenhum cartão encontrado via Open Finance ainda — sincronize uma conexão bancária que tenha cartão de crédito.</div>';
-    return;
+  if (grid) {
+    if (!STATE.cartoesOpenFinance.length) {
+      grid.innerHTML = '<div class="empty">Nenhum cartão encontrado via Open Finance ainda — sincronize uma conexão bancária que tenha cartão de crédito.</div>';
+    } else {
+      const ordenados = [...STATE.cartoesOpenFinance].sort((a, b) => (a.instituicao || "").localeCompare(b.instituicao || "", "pt-BR"));
+      grid.innerHTML = ordenados.map((c) => {
+        const pctUtilizado = c.limiteTotal > 0 ? Math.min(100, Math.max(0, (c.limiteUtilizado / c.limiteTotal) * 100)) : 0;
+        return (
+          `<div class="conexao-card">` +
+          `<div class="conexao-topo"><h3>${esc(c.instituicao)} — ${esc(c.nome)}</h3>${c.bandeira ? `<span class="badge-tipo Saida">${esc(c.bandeira)}</span>` : ""}</div>` +
+          `<div class="plano-progresso-barra"><div class="plano-progresso-fill" style="width:${pctUtilizado}%"></div></div>` +
+          `<div class="plano-progresso-legenda"><span class="pct">${pctUtilizado.toFixed(0)}% utilizado</span><span>${moeda(c.limiteUtilizado)} de ${moeda(c.limiteTotal)}</span></div>` +
+          `<div class="conexao-info" style="margin-top:10px;">Disponível: <strong>${moeda(c.limiteDisponivel)}</strong></div>` +
+          `<div class="conexao-info">Fechamento: ${c.dataFechamento ? dataBR(c.dataFechamento) : "não informado pelo banco"} · Vencimento: ${c.dataVencimento ? dataBR(c.dataVencimento) : "não informado pelo banco"}</div>` +
+          `<div class="conexao-info">Atualizado em: ${c.ultimaSincronizacao ? fmtDataHora(c.ultimaSincronizacao) : "—"}</div>` +
+          `</div>`
+        );
+      }).join("");
+    }
   }
-  const ordenados = [...STATE.cartoesOpenFinance].sort((a, b) => (a.instituicao || "").localeCompare(b.instituicao || "", "pt-BR"));
-  grid.innerHTML = ordenados.map((c) => {
-    const pctUtilizado = c.limiteTotal > 0 ? Math.min(100, Math.max(0, (c.limiteUtilizado / c.limiteTotal) * 100)) : 0;
-    return (
-      `<div class="conexao-card">` +
-      `<div class="conexao-topo"><h3>${esc(c.instituicao)} — ${esc(c.nome)}</h3>${c.bandeira ? `<span class="badge-tipo Saida">${esc(c.bandeira)}</span>` : ""}</div>` +
-      `<div class="plano-progresso-barra"><div class="plano-progresso-fill" style="width:${pctUtilizado}%"></div></div>` +
-      `<div class="plano-progresso-legenda"><span class="pct">${pctUtilizado.toFixed(0)}% utilizado</span><span>${moeda(c.limiteUtilizado)} de ${moeda(c.limiteTotal)}</span></div>` +
-      `<div class="conexao-info" style="margin-top:10px;">Disponível: <strong>${moeda(c.limiteDisponivel)}</strong></div>` +
-      `<div class="conexao-info">Fechamento: ${c.dataFechamento ? dataBR(c.dataFechamento) : "não informado pelo banco"} · Vencimento: ${c.dataVencimento ? dataBR(c.dataVencimento) : "não informado pelo banco"}</div>` +
-      `<div class="conexao-info">Atualizado em: ${c.ultimaSincronizacao ? fmtDataHora(c.ultimaSincronizacao) : "—"}</div>` +
-      `</div>`
-    );
-  }).join("");
+  // Também aparecem como opção no formulário "Nova compra parcelada" — sem
+  // isso, um cartão Open Finance novo só ficaria selecionável depois de
+  // abrir alguma outra tela que chame preencherSelectCartoes() por acaso.
+  preencherSelectCartoes();
 }
 
 // Garante que existe um lançamento genérico "Importado do banco" pro tipo
@@ -1423,7 +1515,14 @@ async function sincronizarConexao(conexaoId) {
     const batch = writeBatch(db);
     novas.forEach((t) => {
       const valor = Number(t.amount) || 0;
-      const tipo = valor < 0 ? "Saida" : "Entrada";
+      // A Pluggy manda um campo "type" (DEBIT/CREDIT) que é o sinal
+      // confiável de verdade — pro CARTÃO, o sinal do valor vem invertido
+      // em relação à conta bancária (uma compra chega com valor positivo,
+      // um pagamento/estorno chega negativo), então usar só o sinal do
+      // valor classifica compra como Entrada e pagamento como Saída,
+      // errado. Guarda o sinal do valor como reserva só pro caso raro de
+      // vir sem o campo "type".
+      const tipo = t.type ? (t.type === "CREDIT" ? "Entrada" : "Saida") : (valor < 0 ? "Saida" : "Entrada");
       const chave = chaveCategorizador(t);
       const lancamentoIdRegra = chave ? mapaRegras[chave] : null;
 
@@ -1467,6 +1566,15 @@ async function sincronizarConexao(conexaoId) {
       // nenhum desses três), continua "A REVISAR" como sempre foi.
       const jaCategorizadaComConfianca = !!(previsaoCorrespondente || lancamentoIdRegra || pendente);
 
+      // "Pago" significa coisas diferentes pra conta bancária e pra cartão:
+      // numa conta, a transação já ter acontecido no extrato JÁ é o
+      // dinheiro tendo saído — pago de verdade. No cartão, uma COMPRA
+      // (Saída — reduz o limite disponível) só entra na fatura, fica em
+      // aberto até você realmente pagar. Já um PAGAMENTO/estorno no cartão
+      // (Entrada — devolve limite) é uma ação que já aconteceu por
+      // completo — nasce PAGO, não tem "fatura" pra esperar.
+      const jaPago = t._contaTipo !== "cartao" || tipo === "Entrada";
+
       const dadosOpenFinance = {
         origem: "Open Finance", pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
         contaTipo: t._contaTipo || "banco", revisado: jaCategorizadaComConfianca, previsao: false, descricaoOrigem: t.description || t.descriptionRaw || "",
@@ -1477,14 +1585,12 @@ async function sincronizarConexao(conexaoId) {
         pendentesConsumidos.add(pendente.id);
         qtdConciliadas++;
         batch.update(doc(db, "movimentacoes", pendente.id), {
-          lancamentoId, pago: true, data: dataTransacao, valor: Math.abs(arredondar2(valor)), ...dadosOpenFinance
+          lancamentoId, pago: jaPago, data: dataTransacao, valor: Math.abs(arredondar2(valor)), ...dadosOpenFinance
         });
       } else {
         const movRef = doc(collection(db, "movimentacoes"));
-        // Transação já aconteceu no extrato do banco, então entra como
-        // "paga" — é histórico, não uma previsão.
         batch.set(movRef, {
-          lancamentoId, data: dataTransacao, valor: Math.abs(arredondar2(valor)), pago: true,
+          lancamentoId, data: dataTransacao, valor: Math.abs(arredondar2(valor)), pago: jaPago,
           responsavel: "", cartaoId: null, compraParceladaId: null, ...dadosOpenFinance, createdAt: serverTimestamp()
         });
       }
@@ -1941,14 +2047,37 @@ async function criarCompraParcelada({ cartaoId, lancamentoId, descricao, respons
   if (!valorTotal || !numParcelas || !dataCompra) { mostrarToast("Preencha valor, parcelas e data da compra.", true); return false; }
   if (numParcelas < 1 || numParcelas > 60) { mostrarToast("Número de parcelas inválido (1 a 60).", true); return false; }
 
-  const cartao = STATE.cartoes.find((c) => c.id === cartaoId);
+  const cartao = buscarCartaoUnificado(cartaoId);
   if (!cartao) { mostrarToast("Cartão não encontrado.", true); return false; }
+  const ehCartaoOpenFinance = cartao.origemCartao === "openFinance";
 
-  const limiteDisponivel = (Number(cartao.limiteTotal) || 0) - calcularLimiteUtilizado(cartaoId);
-  if (valorTotal > limiteDisponivel) {
-    mostrarToast("Limite insuficiente nesse cartão. Disponível: " + moeda(limiteDisponivel), true);
-    return false;
+  // Cartão manual: valida contra o limite que você mesmo cadastrou (soma
+  // das parcelas ainda não pagas). Cartão via Open Finance: não valida
+  // aqui — o banco já controla o limite de verdade, e este lançamento é só
+  // uma PREVISÃO sua até a compra realmente acontecer no extrato.
+  if (!ehCartaoOpenFinance) {
+    const limiteDisponivel = (Number(cartao.limiteTotal) || 0) - calcularLimiteUtilizado(cartaoId);
+    if (valorTotal > limiteDisponivel) {
+      mostrarToast("Limite insuficiente nesse cartão. Disponível: " + moeda(limiteDisponivel), true);
+      return false;
+    }
   }
+
+  // Dia de vencimento: cartão manual usa o dia fixo cadastrado. Cartão via
+  // Open Finance raramente informa um "dia de fechamento" fixo (o banco só
+  // manda a próxima data de vencimento conhecida), então estima o dia a
+  // partir dela — e como não sabe o fechamento, assume que a compra entra
+  // na fatura do mês seguinte (mais seguro que supor "deste mês").
+  const dCompra = parseDataLocal(dataCompra);
+  const diaVencimentoEfetivo = ehCartaoOpenFinance
+    ? (cartao.dataVencimento ? parseDataLocal(cartao.dataVencimento).getDate() : dCompra.getDate())
+    : Number(cartao.diaVencimento);
+  const ciclo = ehCartaoOpenFinance
+    ? { ano: dCompra.getFullYear(), mes: dCompra.getMonth() + 1 }
+    : calcularCicloInicial(dataCompra, Number(cartao.diaFechamento));
+  const dadosExtrasOpenFinance = ehCartaoOpenFinance
+    ? { instituicao: cartao.instituicao, contaTipo: "cartao" }
+    : {};
 
   try {
     const batch = writeBatch(db);
@@ -1956,18 +2085,18 @@ async function criarCompraParcelada({ cartaoId, lancamentoId, descricao, respons
     batch.set(compraRef, { cartaoId, lancamentoId, descricao, responsavel, valorTotal, numParcelas, dataCompra, dataRegistro: serverTimestamp() });
 
     const valorParcela = arredondar2(valorTotal / numParcelas);
-    const ciclo = calcularCicloInicial(dataCompra, Number(cartao.diaFechamento));
 
     for (let i = 0; i < numParcelas; i++) {
       const mesRef = new Date(ciclo.ano, ciclo.mes + i, 1);
-      const vencimento = calcularProximoVencimento(cartao.diaVencimento, mesRef);
+      const vencimento = calcularProximoVencimento(diaVencimentoEfetivo, mesRef);
       const valorDaParcela = i === numParcelas - 1
         ? arredondar2(valorTotal - valorParcela * (numParcelas - 1))
         : valorParcela;
       const movRef = doc(collection(db, "movimentacoes"));
       batch.set(movRef, {
         lancamentoId, data: vencimento, valor: valorDaParcela, pago: false, responsavel,
-        origem: `Cartao ${i + 1}/${numParcelas}`, cartaoId, compraParceladaId: compraRef.id, createdAt: serverTimestamp()
+        origem: `Cartao ${i + 1}/${numParcelas}`, cartaoId, compraParceladaId: compraRef.id,
+        ...dadosExtrasOpenFinance, createdAt: serverTimestamp()
       });
     }
 

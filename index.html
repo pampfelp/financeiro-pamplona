@@ -115,6 +115,10 @@
 
     <div class="card">
       <h2>Movimentações cadastradas</h2>
+      <div class="field" style="margin-bottom:14px;">
+        <label>Buscar em qualquer campo</label>
+        <input type="text" id="mov-busca-livre" placeholder="Digite qualquer coisa: nome, banco, categoria, valor, &quot;entrada&quot;, &quot;pendente&quot;...">
+      </div>
       <div class="row">
         <div class="field" style="max-width:180px;">
           <label>De</label>
@@ -123,6 +127,14 @@
         <div class="field" style="max-width:180px;">
           <label>Até</label>
           <input type="month" id="mov-filtro-mes-ate">
+        </div>
+        <div class="field" style="max-width:160px;">
+          <label>Tipo</label>
+          <select id="mov-filtro-tipo">
+            <option value="">Entrada e Saída</option>
+            <option value="Entrada">Só Entrada</option>
+            <option value="Saida">Só Saída</option>
+          </select>
         </div>
         <div class="field" style="max-width:200px;">
           <label>Pessoa</label>
