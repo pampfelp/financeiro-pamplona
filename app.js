@@ -13,7 +13,7 @@
 import { db, PLUGGY_PROXY_URL } from "./firebase-init.js";
 import {
   collection, addDoc, updateDoc, deleteDoc, setDoc, doc, increment,
-  onSnapshot, query, orderBy, serverTimestamp, writeBatch
+  onSnapshot, query, orderBy, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
 const STATE = {
@@ -682,11 +682,19 @@ function renderMovimentacoes() {
         (aRevisar ? ' <span class="stamp revisar">A REVISAR</span>' : "") +
         (ehPrevisao ? ' <span class="stamp reconexao">PREVISÃO</span>' : "")
       );
+      // Pra cartão, "data" é o vencimento da fatura, não quando a compra
+      // aconteceu — mostra a data real como referência quando for
+      // diferente, senão fica parecendo que a compra foi feita no dia do
+      // vencimento.
+      const rotuloDataReal = (m.dataTransacaoReal && m.dataTransacaoReal !== m.data)
+        ? `Comprado em ${dataBR(m.dataTransacaoReal)}`
+        : "";
       const sublabels = [
         usaDescricaoComoTitulo ? `${m.nomeLancamento}${aRevisar ? " (a revisar)" : ""}` : "",
         m.descricaoCompra,
         rotuloParcela,
-        usaDescricaoComoTitulo ? "" : m.descricaoOrigem
+        usaDescricaoComoTitulo ? "" : m.descricaoOrigem,
+        rotuloDataReal
       ].filter(Boolean).map((s) => `<span class="sublabel">${esc(s)}</span>`).join("");
       return (
         `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
@@ -1255,17 +1263,25 @@ function renderCartoesOpenFinance() {
       const ordenados = [...STATE.cartoesOpenFinance].sort((a, b) => (a.instituicao || "").localeCompare(b.instituicao || "", "pt-BR"));
       grid.innerHTML = ordenados.map((c) => {
         const pctUtilizado = c.limiteTotal > 0 ? Math.min(100, Math.max(0, (c.limiteUtilizado / c.limiteTotal) * 100)) : 0;
+        const diaFechamento = diaFechamentoEfetivoOF(c);
+        const diaVencimento = diaVencimentoEfetivoOF(c);
+        const rotuloFechamento = diaFechamento ? `dia ${diaFechamento}${c.diaFechamentoManual ? " (configurado por você)" : ""}` : "não informado";
+        const rotuloVencimento = diaVencimento ? `dia ${diaVencimento}${c.diaVencimentoManual ? " (configurado por você)" : ""}` : "não informado";
         return (
           `<div class="conexao-card">` +
           `<div class="conexao-topo"><h3>${esc(c.instituicao)} — ${esc(c.nome)}</h3>${c.bandeira ? `<span class="badge-tipo Saida">${esc(c.bandeira)}</span>` : ""}</div>` +
           `<div class="plano-progresso-barra"><div class="plano-progresso-fill" style="width:${pctUtilizado}%"></div></div>` +
           `<div class="plano-progresso-legenda"><span class="pct">${pctUtilizado.toFixed(0)}% utilizado</span><span>${moeda(c.limiteUtilizado)} de ${moeda(c.limiteTotal)}</span></div>` +
           `<div class="conexao-info" style="margin-top:10px;">Disponível: <strong>${moeda(c.limiteDisponivel)}</strong></div>` +
-          `<div class="conexao-info">Fechamento: ${c.dataFechamento ? dataBR(c.dataFechamento) : "não informado pelo banco"} · Vencimento: ${c.dataVencimento ? dataBR(c.dataVencimento) : "não informado pelo banco"}</div>` +
+          `<div class="conexao-info">Fechamento: ${rotuloFechamento} · Vencimento: ${rotuloVencimento}</div>` +
           `<div class="conexao-info">Atualizado em: ${c.ultimaSincronizacao ? fmtDataHora(c.ultimaSincronizacao) : "—"}</div>` +
+          `<button class="btn-small" style="margin-top:8px;" data-configurar-ciclo="${c.id}">✏️ Configurar dia de fechamento/vencimento</button>` +
           `</div>`
         );
       }).join("");
+      grid.querySelectorAll("[data-configurar-ciclo]").forEach((btn) => {
+        btn.addEventListener("click", () => abrirModalConfigurarCicloOF(btn.dataset.configurarCiclo));
+      });
     }
   }
   // Também aparecem como opção no formulário "Nova compra parcelada" — sem
@@ -1385,10 +1401,13 @@ function encontrarPrevisaoParaConciliar(grupoParcelamento, parcelaAtual, pendent
 // manual de cartão, que já cria todas de uma vez). Cada previsão vira uma
 // movimentação PENDENTE normal; quando a parcela real chegar num sync
 // futuro, encontrarPrevisaoParaConciliar() casa com ela em vez de duplicar.
-function gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, conexaoId, conexao, contaTipo, jaExistentesOuCriadas) {
+function gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, conexaoId, conexao, contaTipo, jaExistentesOuCriadas, dataVencimentoBase) {
   const valorParcela = Math.abs(arredondar2(Number(t.amount) || 0));
   const base = baseDescricaoParcela(t.description || t.descriptionRaw);
-  const dataBaseTransacao = parseDataLocal(String(t.date || "").slice(0, 10));
+  // Soma os meses a partir da data de VENCIMENTO desta parcela (não da
+  // data da compra) — assim as parcelas futuras também caem certinho no
+  // dia de vencimento da fatura, não no dia em que a compra aconteceu.
+  const dataBaseTransacao = parseDataLocal(dataVencimentoBase || String(t.date || "").slice(0, 10));
   for (let n = meta.installmentNumber + 1; n <= meta.totalInstallments; n++) {
     const marcador = grupoParcelamento + "#" + n;
     if (jaExistentesOuCriadas.has(marcador)) continue;
@@ -1412,6 +1431,12 @@ function gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, 
 // leitura/espelho do banco, por isso não tem os campos de dia de
 // fechamento/vencimento fixos do cadastro manual de cartões (aqui a data
 // de fechamento/vencimento já vem calculada pelo banco a cada sincronização).
+// Devolve o cartão OF já mesclado (dados frescos do banco + os campos
+// manuais que o usuário configurou, se houver — diaFechamentoManual e
+// diaVencimentoManual nunca são escritos aqui, então updateDoc não mexe
+// neles). É esse retorno que sincronizarConexao usa pra calcular a data de
+// vencimento de cada transação, sem depender do STATE (que só atualiza de
+// forma reativa, um pouco depois da escrita).
 async function sincronizarCartaoOpenFinance(conexaoId, conexao, conta) {
   const cd = conta.creditData || {};
   const limiteTotal = Number(cd.creditLimit) || 0;
@@ -1427,9 +1452,179 @@ async function sincronizarCartaoOpenFinance(conexaoId, conexao, conta) {
   const existente = STATE.cartoesOpenFinance.find((c) => c.accountId === conta.id);
   if (existente) {
     await updateDoc(doc(db, "cartoesOpenFinance", existente.id), dados);
+    return { ...existente, ...dados, id: existente.id };
   } else {
-    await addDoc(collection(db, "cartoesOpenFinance"), dados);
+    const ref = await addDoc(collection(db, "cartoesOpenFinance"), dados);
+    return { ...dados, id: ref.id, diaFechamentoManual: null, diaVencimentoManual: null };
   }
+}
+
+// Descobre o dia de fechamento/vencimento efetivo de um cartão Open
+// Finance: prioriza o que o USUÁRIO configurou manualmente (mais
+// confiável, já que o banco costuma não informar isso via Open Finance);
+// senão, tenta extrair o dia a partir da última data que o banco mandou;
+// sem nenhum dos dois, devolve null (não dá pra calcular vencimento).
+function diaFechamentoEfetivoOF(cartaoOF) {
+  if (!cartaoOF) return null;
+  if (cartaoOF.diaFechamentoManual) return Number(cartaoOF.diaFechamentoManual);
+  if (cartaoOF.dataFechamento) return parseDataLocal(cartaoOF.dataFechamento).getDate();
+  return null;
+}
+function diaVencimentoEfetivoOF(cartaoOF) {
+  if (!cartaoOF) return null;
+  if (cartaoOF.diaVencimentoManual) return Number(cartaoOF.diaVencimentoManual);
+  if (cartaoOF.dataVencimento) return parseDataLocal(cartaoOF.dataVencimento).getDate();
+  return null;
+}
+
+// A data que entra em Movimentações pra uma compra no cartão é a data de
+// VENCIMENTO da fatura que ela cai (mesma regra do cadastro manual de
+// cartões) — não a data em que a compra aconteceu. Assim, quando você paga
+// a fatura, todas as compras daquele ciclo aparecem juntas na mesma data,
+// e "a pagar" reflete o que você realmente vai desembolsar e quando.
+// Devolve null se não der pra calcular (sem dia de vencimento conhecido,
+// nem informado pelo banco nem cadastrado manualmente) — nesse caso quem
+// chama usa a data real da transação como já fazia antes.
+function calcularVencimentoCartaoOF(cartaoOF, dataTransacaoStr) {
+  const diaVencimento = diaVencimentoEfetivoOF(cartaoOF);
+  if (!diaVencimento) return null;
+  const diaFechamento = diaFechamentoEfetivoOF(cartaoOF);
+  let ano, mes; // mes 0-indexado, já apontando pro ciclo/fatura certo
+  if (diaFechamento) {
+    const ciclo = calcularCicloInicial(dataTransacaoStr, diaFechamento);
+    ano = ciclo.ano; mes = ciclo.mes;
+  } else {
+    // Sem dia de fechamento conhecido: assume que a compra sempre cai na
+    // fatura do mês seguinte (mais seguro que supor "deste mês").
+    const d = parseDataLocal(dataTransacaoStr);
+    ano = d.getFullYear(); mes = d.getMonth() + 1;
+  }
+  return calcularProximoVencimento(diaVencimento, new Date(ano, mes, 1));
+}
+
+function abrirModalConfigurarCicloOF(id) {
+  const c = STATE.cartoesOpenFinance.find((x) => x.id === id);
+  if (!c) return mostrarToast("Cartão não encontrado.", true);
+  document.getElementById("config-ciclo-of-id").value = c.id;
+  document.getElementById("config-ciclo-of-fechamento").value = diaFechamentoEfetivoOF(c) || "";
+  document.getElementById("config-ciclo-of-vencimento").value = diaVencimentoEfetivoOF(c) || "";
+  document.getElementById("modal-configurar-ciclo-of").classList.add("active");
+}
+function fecharModalConfigurarCicloOF() {
+  document.getElementById("modal-configurar-ciclo-of").classList.remove("active");
+}
+document.getElementById("btn-cancelar-config-ciclo-of").addEventListener("click", fecharModalConfigurarCicloOF);
+document.getElementById("modal-configurar-ciclo-of").addEventListener("click", (e) => {
+  if (e.target.id === "modal-configurar-ciclo-of") fecharModalConfigurarCicloOF();
+});
+
+document.getElementById("btn-salvar-config-ciclo-of").addEventListener("click", async () => {
+  const id = document.getElementById("config-ciclo-of-id").value;
+  const diaFechamentoManual = Number(document.getElementById("config-ciclo-of-fechamento").value) || null;
+  const diaVencimentoManual = Number(document.getElementById("config-ciclo-of-vencimento").value) || null;
+  if (diaVencimentoManual && (diaVencimentoManual < 1 || diaVencimentoManual > 31)) {
+    return mostrarToast("Dia de vencimento inválido.", true);
+  }
+  if (diaFechamentoManual && (diaFechamentoManual < 1 || diaFechamentoManual > 31)) {
+    return mostrarToast("Dia de fechamento inválido.", true);
+  }
+  try {
+    await updateDoc(doc(db, "cartoesOpenFinance", id), { diaFechamentoManual, diaVencimentoManual });
+    const cartaoAtualizado = { ...STATE.cartoesOpenFinance.find((x) => x.id === id), diaFechamentoManual, diaVencimentoManual };
+    fecharModalConfigurarCicloOF();
+    const qtd = await recalcularDatasCartaoOF(cartaoAtualizado);
+    mostrarToast(qtd ? `Ciclo salvo — ${qtd} movimentação(ões) tiveram a data de vencimento recalculada.` : "Ciclo salvo.");
+  } catch (err) {
+    mostrarToast("Não foi possível salvar: " + err.message, true);
+  }
+});
+
+// Recalcula, com base no dia de fechamento/vencimento (manual ou vindo do
+// banco), a data de vencimento das movimentações de cartão JÁ importadas
+// dessa instituição — sem isso, configurar o ciclo só corrigiria as
+// próximas sincronizações, deixando o que já está lançado com a data
+// antiga (errada). Só toca em transações reais (não em previsões futuras,
+// que serão corrigidas naturalmente quando a compra real chegar).
+async function recalcularDatasCartaoOF(cartaoOF) {
+  const snap = await getDocs(query(
+    collection(db, "movimentacoes"),
+    where("contaTipo", "==", "cartao"),
+    where("origem", "==", "Open Finance"),
+    where("instituicao", "==", cartaoOF.instituicao)
+  ));
+  const batch = writeBatch(db);
+  let mudancas = 0;
+  snap.docs.forEach((d) => {
+    const m = d.data();
+    if (m.previsao === true) return;
+    const dataBase = m.dataTransacaoReal || m.data;
+    const novaData = calcularVencimentoCartaoOF(cartaoOF, dataBase);
+    if (novaData && novaData !== m.data) {
+      batch.update(doc(db, "movimentacoes", d.id), { data: novaData, dataTransacaoReal: dataBase });
+      mudancas++;
+    }
+  });
+  if (mudancas) await batch.commit();
+  return mudancas;
+}
+
+// Mantém o "pago"/"pendente" de todas as transações de cartão de uma
+// instituição em dia sozinho, sem precisar da ferramenta manual de
+// conciliação (ver "🧮 Conciliar fatura (rotativo)"): percorre TODAS as
+// transações de cartão daquele banco em ordem cronológica e aplica a regra
+// que qualquer cartão de crédito usa na prática — cada pagamento/estorno
+// (crédito) quita as compras mais antigas em aberto primeiro (FIFO), até
+// esgotar o valor do crédito. O que sobrar em aberto é a dívida atual real.
+// Essa regra foi validada batendo, item por item, com uma conciliação
+// manual real feita junto com o usuário antes de virar automática.
+async function aplicarFifoCartao(instituicao) {
+  const [movsSnap, lancSnap] = await Promise.all([
+    getDocs(query(collection(db, "movimentacoes"), where("contaTipo", "==", "cartao"), where("origem", "==", "Open Finance"), where("instituicao", "==", instituicao))),
+    getDocs(collection(db, "lancamentos"))
+  ]);
+  const mapaLanc = {};
+  lancSnap.docs.forEach((d) => (mapaLanc[d.id] = d.data()));
+
+  const todas = movsSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((m) => m.previsao !== true)
+    .map((m) => ({ ...m, tipoReal: (mapaLanc[m.lancamentoId] || {}).tipo }))
+    // Mesma data: crédito processa antes do débito (não muda o resultado
+    // na prática, só deixa o comportamento previsível).
+    .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : (a.tipoReal === "Entrada" ? -1 : 1)));
+
+  const filaDebitos = [];
+  const paraPago = new Set();
+  todas.forEach((m) => {
+    if (m.tipoReal === "Entrada") {
+      paraPago.add(m.id);
+      let restante = arredondar2(Number(m.valor) || 0);
+      while (restante > 0.005 && filaDebitos.length) {
+        const proximo = filaDebitos[0];
+        if (proximo.valor <= restante + 0.005) {
+          paraPago.add(proximo.id);
+          restante = arredondar2(restante - proximo.valor);
+          filaDebitos.shift();
+        } else {
+          break; // cobre só parcialmente — não dá pra "meio pagar" uma transação
+        }
+      }
+    } else {
+      filaDebitos.push({ id: m.id, valor: Number(m.valor) || 0 });
+    }
+  });
+
+  const batch = writeBatch(db);
+  let mudancas = 0;
+  todas.forEach((m) => {
+    const deveFicarPago = paraPago.has(m.id);
+    if (m.pago !== deveFicarPago) {
+      batch.update(doc(db, "movimentacoes", m.id), { pago: deveFicarPago });
+      mudancas++;
+    }
+  });
+  if (mudancas) await batch.commit();
+  return mudancas;
 }
 
 async function sincronizarConexao(conexaoId) {
@@ -1447,9 +1642,12 @@ async function sincronizarConexao(conexaoId) {
     }
 
     // Cartões de crédito da conexão: atualiza limite/fatura ANTES das
-    // transações, independente de ter transação nova ou não.
+    // transações, independente de ter transação nova ou não. Guarda o
+    // cartão mesclado (dados do banco + config manual) por accountId, pra
+    // calcular a data de vencimento de cada transação logo abaixo.
+    const mapaCartaoOFPorConta = {};
     for (const conta of contas) {
-      if (conta.type === "CREDIT") await sincronizarCartaoOpenFinance(conexaoId, conexao, conta);
+      if (conta.type === "CREDIT") mapaCartaoOFPorConta[conta.id] = await sincronizarCartaoOpenFinance(conexaoId, conexao, conta);
     }
 
     const hoje = new Date();
@@ -1475,6 +1673,10 @@ async function sincronizarConexao(conexaoId) {
 
     if (!novas.length) {
       await updateDoc(doc(db, "conexoesBancarias", conexaoId), { ultimaSincronizacao: serverTimestamp(), status: "conectado" });
+      // Reaplica o FIFO mesmo sem transação nova — mantém a situação de
+      // pagamento do cartão corrigida sozinha se algo tiver mudado (ex:
+      // edição manual) desde a última sincronização.
+      if (contas.some((c) => c.type === "CREDIT")) await aplicarFifoCartao(conexao.instituicao);
       mostrarToast("Tudo em dia — nenhuma transação nova.");
       return;
     }
@@ -1535,6 +1737,14 @@ async function sincronizarConexao(conexaoId) {
       } : { parcelaAtual: null, parcelaTotal: null, valorTotalCompra: null };
 
       const dataTransacao = String(t.date || dataAte).slice(0, 10);
+      // Pra cartão, o que entra em Movimentações é a data de VENCIMENTO da
+      // fatura (mesma regra do cadastro manual de cartões) — não a data em
+      // que a compra aconteceu. Assim, pagar a fatura = tudo daquele ciclo
+      // aparece junto na mesma data. Guarda a data real da transação à
+      // parte, só pra referência (mostrada como sublabel).
+      const cartaoOF = t._contaTipo === "cartao" ? mapaCartaoOFPorConta[t.accountId] : null;
+      const vencimentoCalculado = cartaoOF ? calcularVencimentoCartaoOF(cartaoOF, dataTransacao) : null;
+      const dataParaMovimentacao = vencimentoCalculado || dataTransacao;
 
       // Conciliação tem duas formas, da mais precisa pra mais genérica:
       // 1) Essa parcela já tinha sido PREVISTA numa sincronização anterior
@@ -1549,7 +1759,7 @@ async function sincronizarConexao(conexaoId) {
         ? encontrarPrevisaoParaConciliar(grupoParcelamento, meta.installmentNumber, pendentesConsumidos)
         : null;
       const pendente = previsaoCorrespondente || (lancamentoIdRegra
-        ? encontrarPendenteParaConciliar(lancamentoIdRegra, dataTransacao, pendentesConsumidos)
+        ? encontrarPendenteParaConciliar(lancamentoIdRegra, dataParaMovimentacao, pendentesConsumidos)
         : null);
       if (lancamentoIdRegra) qtdAutoCategorizadas++;
 
@@ -1577,7 +1787,8 @@ async function sincronizarConexao(conexaoId) {
 
       const dadosOpenFinance = {
         origem: "Open Finance", pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
-        contaTipo: t._contaTipo || "banco", revisado: jaCategorizadaComConfianca, previsao: false, descricaoOrigem: t.description || t.descriptionRaw || "",
+        contaTipo: t._contaTipo || "banco", revisado: jaCategorizadaComConfianca, previsao: false,
+        descricaoOrigem: t.description || t.descriptionRaw || "", dataTransacaoReal: dataTransacao,
         chaveCategorizador: chave, grupoParcelamento, ...dadosParcela
       };
 
@@ -1585,30 +1796,41 @@ async function sincronizarConexao(conexaoId) {
         pendentesConsumidos.add(pendente.id);
         qtdConciliadas++;
         batch.update(doc(db, "movimentacoes", pendente.id), {
-          lancamentoId, pago: jaPago, data: dataTransacao, valor: Math.abs(arredondar2(valor)), ...dadosOpenFinance
+          lancamentoId, pago: jaPago, data: dataParaMovimentacao, valor: Math.abs(arredondar2(valor)), ...dadosOpenFinance
         });
       } else {
         const movRef = doc(collection(db, "movimentacoes"));
         batch.set(movRef, {
-          lancamentoId, data: dataTransacao, valor: Math.abs(arredondar2(valor)), pago: jaPago,
+          lancamentoId, data: dataParaMovimentacao, valor: Math.abs(arredondar2(valor)), pago: jaPago,
           responsavel: "", cartaoId: null, compraParceladaId: null, ...dadosOpenFinance, createdAt: serverTimestamp()
         });
       }
 
       // Compra parcelada com parcelas ainda por vir: gera as previstas que
       // ainda não existem, pra aparecerem como PENDENTE em Movimentações
-      // já agora, em vez de só quando cada uma acontecer de verdade.
+      // já agora, em vez de só quando cada uma acontecer de verdade. Usa a
+      // data de vencimento (não a da compra) como base pra somar os meses,
+      // senão as parcelas futuras cairiam no dia da compra, não no dia
+      // certo da fatura.
       if (ehParcelaDeCartao && meta.totalInstallments > meta.installmentNumber) {
         qtdPrevisoesGeradas += meta.totalInstallments - meta.installmentNumber;
-        gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, conexaoId, conexao, t._contaTipo || "cartao", marcadoresParcelaExistentes);
+        gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, conexaoId, conexao, t._contaTipo || "cartao", marcadoresParcelaExistentes, dataParaMovimentacao);
       }
     });
     batch.update(doc(db, "conexoesBancarias", conexaoId), { ultimaSincronizacao: serverTimestamp(), status: "conectado" });
     await batch.commit();
+
+    // Reaplica o FIFO do cartão depois de gravar tudo — cobre tanto
+    // pagamentos novos quitando compras antigas quanto ajustes que a
+    // sincronização acabou de fazer.
+    const temCartao = contas.some((c) => c.type === "CREDIT");
+    const qtdFifoAjustadas = temCartao ? await aplicarFifoCartao(conexao.instituicao) : 0;
+
     const partesResumo = [];
     if (qtdConciliadas) partesResumo.push(`${qtdConciliadas} conciliada(s) com lançamento(s) pendente(s)`);
     if (qtdAutoCategorizadas - qtdConciliadas > 0) partesResumo.push(`${qtdAutoCategorizadas - qtdConciliadas} categorizada(s) automaticamente por regra`);
     if (qtdPrevisoesGeradas) partesResumo.push(`${qtdPrevisoesGeradas} parcela(s) futura(s) prevista(s)`);
+    if (qtdFifoAjustadas) partesResumo.push(`${qtdFifoAjustadas} situação(ões) de pagamento do cartão ajustada(s) automaticamente`);
     const sufixo = partesResumo.length ? ` (${partesResumo.join(", ")})` : "";
     mostrarToast(`${novas.length} transação(ões) importada(s) de ${conexao.instituicao || "banco"}${sufixo}. Recategorize em Movimentações se quiser.`);
   } catch (err) {
@@ -1909,6 +2131,7 @@ function abrirModalMovimentacao(id) {
       : `Importada do banco ${mov.instituicao || ""}`.trim()];
     if (mov.descricaoOrigem) partes.push(`descrição${mov.previsao === true ? " estimada" : " original"}: "${mov.descricaoOrigem}"`);
     if (mov.parcelaAtual) partes.push(`parcela ${mov.parcelaAtual}${mov.parcelaTotal ? "/" + mov.parcelaTotal : ""}`);
+    if (mov.dataTransacaoReal && mov.dataTransacaoReal !== mov.data) partes.push(`comprado em ${dataBR(mov.dataTransacaoReal)}, data aqui é o vencimento da fatura`);
     if (mov.previsao === true) {
       partes.push("quando essa parcela realmente cair no banco, o sistema atualiza esta linha sozinho — não precisa apagar.");
     } else {

@@ -574,6 +574,27 @@
   </div>
 </div>
 
+<!-- MODAL: configurar dia de fechamento/vencimento de cartão Open Finance -->
+<div class="modal-overlay" id="modal-configurar-ciclo-of">
+  <div class="modal-box">
+    <h2>Configurar ciclo da fatura</h2>
+    <input type="hidden" id="config-ciclo-of-id">
+    <p class="hint" style="margin-top:6px;font-size:12.5px;color:var(--ink-soft);">Use isso quando o banco não informa automaticamente o dia de fechamento e/ou vencimento deste cartão. Com esses dias configurados, o sistema calcula corretamente em qual fatura cada compra cai.</p>
+    <div class="field" style="margin-top:14px;">
+      <label>Dia de fechamento</label>
+      <input type="number" min="1" max="31" id="config-ciclo-of-fechamento">
+    </div>
+    <div class="field" style="margin-top:10px;">
+      <label>Dia de vencimento</label>
+      <input type="number" min="1" max="31" id="config-ciclo-of-vencimento">
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:18px;">
+      <button class="btn" id="btn-cancelar-config-ciclo-of">Cancelar</button>
+      <button class="btn btn-primary" id="btn-salvar-config-ciclo-of">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: editar/excluir custo recorrente -->
 <div class="modal-overlay" id="modal-editar-recorrente">
   <div class="modal-box">
