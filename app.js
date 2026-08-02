@@ -327,13 +327,7 @@ function renderLancamentos() {
       btn.addEventListener("click", () => abrirModalEdicaoLancamento(btn.dataset.editarLanc));
     });
   }
-  preencherCategorias();
   preencherSelectsLancamento();
-}
-
-function preencherCategorias() {
-  const categorias = [...new Set(STATE.lancamentos.map((l) => l.categoria).filter(Boolean))].sort();
-  document.getElementById("lista-categorias").innerHTML = categorias.map((c) => `<option value="${esc(c)}"></option>`).join("");
 }
 
 const CAMPOS_BUSCA_LANCAMENTO = [
@@ -413,6 +407,56 @@ function iniciarBuscaLancamento() {
         dropdown.classList.remove("active");
         const l = STATE.lancamentos.find((x) => x.id === hidden.value);
         busca.value = l ? rotuloLancamento(l) : "";
+      }, 150);
+    });
+  });
+}
+
+const CAMPOS_BUSCA_CATEGORIA = ["edit-lanc-categoria", "novo-lanc-categoria"];
+
+// Mesmo componente de dropdown do Lançamento, mas pro campo Categoria —
+// que é texto livre (dá pra digitar uma categoria nova, não precisa
+// escolher só entre as existentes). Por isso, ao sair do campo, só
+// restaura o valor anterior se ele ficou vazio (evita perder a categoria
+// sem querer); um texto novo digitado é sempre aceito.
+function iniciarBuscaCategoria() {
+  CAMPOS_BUSCA_CATEGORIA.forEach((id) => {
+    const input = document.getElementById(id);
+    const dropdown = document.getElementById("dd-" + id);
+    if (!input || !dropdown) return;
+    let valorAoFocar = "";
+
+    function renderOpcoesCategoria(filtro) {
+      const termo = (filtro || "").trim().toLowerCase();
+      const categorias = [...new Set(STATE.lancamentos.map((l) => l.categoria).filter(Boolean))]
+        .filter((c) => !termo || c.toLowerCase().includes(termo))
+        .sort((a, b) => a.localeCompare(b, "pt-BR"));
+      dropdown.innerHTML = categorias.length
+        ? categorias.map((c) => `<div class="combo-opcao" data-valor="${esc(c)}">${esc(c)}</div>`).join("")
+        : '<div class="combo-vazio">Nenhuma categoria encontrada.</div>';
+    }
+
+    input.addEventListener("focus", () => {
+      valorAoFocar = input.value;
+      input.value = "";
+      renderOpcoesCategoria("");
+      dropdown.classList.add("active");
+    });
+    input.addEventListener("input", () => {
+      renderOpcoesCategoria(input.value);
+      dropdown.classList.add("active");
+    });
+    dropdown.addEventListener("mousedown", (e) => {
+      const opcao = e.target.closest(".combo-opcao");
+      if (!opcao) return;
+      e.preventDefault();
+      input.value = opcao.dataset.valor;
+      dropdown.classList.remove("active");
+    });
+    input.addEventListener("blur", () => {
+      setTimeout(() => {
+        dropdown.classList.remove("active");
+        if (!input.value.trim()) input.value = valorAoFocar;
       }, 150);
     });
   });
@@ -2941,4 +2985,5 @@ function iniciarListeners() {
 // filtraria sem querer num intervalo de dois lados em vez de um só.
 
 iniciarBuscaLancamento();
+iniciarBuscaCategoria();
 iniciarListeners();

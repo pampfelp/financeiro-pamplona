@@ -140,7 +140,6 @@
     </div>
     <div class="top-actions"><button class="btn btn-primary" id="btn-novo-lancamento-tela">+ Novo lançamento</button></div>
     </header>
-    <datalist id="lista-categorias"></datalist>
 
     <div class="card">
       <h2>Lançamentos cadastrados</h2>
@@ -303,7 +302,10 @@
     </div>
     <div class="field" style="margin-top:10px;">
       <label>Categoria</label>
-      <input type="text" id="edit-lanc-categoria" list="lista-categorias" autocomplete="off">
+      <div class="combo-wrap">
+        <input type="text" id="edit-lanc-categoria" autocomplete="off">
+        <div class="combo-dropdown" id="dd-edit-lanc-categoria"></div>
+      </div>
     </div>
     <div class="row" style="justify-content:flex-end; margin-top:18px;">
       <button class="btn" id="btn-cancelar-edicao-lanc">Cancelar</button>
@@ -378,7 +380,10 @@
     </div>
     <div class="field" style="margin-top:10px;">
       <label>Categoria</label>
-      <input type="text" id="novo-lanc-categoria" list="lista-categorias" placeholder="Ex: Moradia, Lazer, Renda..." autocomplete="off">
+      <div class="combo-wrap">
+        <input type="text" id="novo-lanc-categoria" placeholder="Ex: Moradia, Lazer, Renda..." autocomplete="off">
+        <div class="combo-dropdown" id="dd-novo-lanc-categoria"></div>
+      </div>
     </div>
     <div class="row" style="justify-content:flex-end; margin-top:18px;">
       <button class="btn" id="btn-cancelar-novo-lancamento">Cancelar</button>
