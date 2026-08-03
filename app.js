@@ -30,8 +30,9 @@ const STATE = {
   cartoesOpenFinance: [],
   regrasCategorizacaoOF: [],
   config: { rendaMensal: 0, saldoInicial: 0 },
-  filtroMovMesDe: "",
-  filtroMovMesAte: "",
+  filtroMovMesDe: mesAtualISO(),
+  filtroMovMesAte: mesAtualISO(),
+  paginaMov: 1,
   filtroMovPessoa: "",
   filtroMovBanco: "",
   filtroMovTipoConta: "",
@@ -96,6 +97,11 @@ function formatarDataISO(d) {
   const mes = String(d.getMonth() + 1).padStart(2, "0");
   const dia = String(d.getDate()).padStart(2, "0");
   return `${ano}-${mes}-${dia}`;
+}
+
+function mesAtualISO() {
+  const hoje = new Date();
+  return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function tsParaMillis(ts) {
@@ -667,28 +673,34 @@ function preencherFiltroBanco(enriquecidas) {
 
 document.getElementById("mov-filtro-pessoa").addEventListener("change", (e) => {
   STATE.filtroMovPessoa = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 document.getElementById("mov-filtro-banco").addEventListener("change", (e) => {
   STATE.filtroMovBanco = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 document.getElementById("mov-filtro-tipo-conta").addEventListener("change", (e) => {
   STATE.filtroMovTipoConta = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 document.getElementById("mov-filtro-revisado").addEventListener("change", (e) => {
   STATE.filtroMovRevisado = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 document.getElementById("mov-filtro-tipo").addEventListener("change", (e) => {
   STATE.filtroMovTipo = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 // "input" (não "change") pra filtrar a cada letra digitada, sem precisar
 // sair do campo.
 document.getElementById("mov-busca-livre").addEventListener("input", (e) => {
   STATE.buscaLivreMov = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 
@@ -717,6 +729,8 @@ function renderMovKpis(filtradas) {
     kpiCard("A receber no período", moeda(totalAReceber) + ` <small>(${qtdAReceber})</small>`, totalAReceber === 0);
 }
 
+const PAGINA_MOV_TAMANHO = 30;
+
 function renderMovimentacoes() {
   const mapaLanc = mapaLancamentos();
   const mapaCompra = {};
@@ -731,11 +745,20 @@ function renderMovimentacoes() {
         ...m, nomeLancamento: l.nome || "(excluído)", tipo: l.tipo || "", categoria: l.categoria || "",
         descricaoCompra: compra ? compra.descricao : ""
       };
-    });
+    })
+    // "data" só tem dia (sem hora), então duas movimentações do mesmo dia
+    // empatam nela — usa "createdAt" (quando o registro foi criado, esse
+    // sim com hora) como desempate, da mais recente pra mais antiga.
+    .sort((a, b) => (a.data !== b.data ? (a.data < b.data ? 1 : -1) : tsParaMillis(b.createdAt) - tsParaMillis(a.createdAt)));
 
   preencherFiltroPessoa(enriquecidas);
   preencherFiltroBanco(enriquecidas);
   const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorMes(enriquecidas)))))));
+
+  const totalPaginasMov = Math.max(1, Math.ceil(filtradas.length / PAGINA_MOV_TAMANHO));
+  STATE.paginaMov = Math.min(Math.max(1, STATE.paginaMov), totalPaginasMov);
+  const inicioPaginaMov = (STATE.paginaMov - 1) * PAGINA_MOV_TAMANHO;
+  const paginadas = filtradas.slice(inicioPaginaMov, inicioPaginaMov + PAGINA_MOV_TAMANHO);
 
   const body = document.getElementById("movs-body");
   if (!filtradas.length) {
@@ -744,7 +767,7 @@ function renderMovimentacoes() {
       || STATE.filtroMovTipo || STATE.buscaLivreMov;
     body.innerHTML = `<tr><td colspan="8" class="empty">${temFiltro ? "Nenhuma movimentação com esse filtro." : "Nenhuma movimentação registrada ainda."}</td></tr>`;
   } else {
-    body.innerHTML = filtradas.map((m) => {
+    body.innerHTML = paginadas.map((m) => {
       const aRevisar = m.origem === "Open Finance" && m.revisado !== true;
       const ehPrevisao = m.previsao === true;
       // Mostra o banco tanto pra transação já confirmada (origem "Open
@@ -803,16 +826,29 @@ function renderMovimentacoes() {
     });
   }
 
+  const paginacao = document.getElementById("mov-paginacao");
+  paginacao.innerHTML = filtradas.length ? (
+    `<button class="btn btn-small" id="btn-mov-pag-anterior" ${STATE.paginaMov <= 1 ? "disabled" : ""}>‹ Anterior</button>` +
+    `<span>Página ${STATE.paginaMov} de ${totalPaginasMov} — ${filtradas.length} movimentação(ões)</span>` +
+    `<button class="btn btn-small" id="btn-mov-pag-proxima" ${STATE.paginaMov >= totalPaginasMov ? "disabled" : ""}>Próxima ›</button>`
+  ) : "";
+  const btnAnterior = document.getElementById("btn-mov-pag-anterior");
+  if (btnAnterior) btnAnterior.addEventListener("click", () => { STATE.paginaMov--; renderMovimentacoes(); });
+  const btnProxima = document.getElementById("btn-mov-pag-proxima");
+  if (btnProxima) btnProxima.addEventListener("click", () => { STATE.paginaMov++; renderMovimentacoes(); });
+
   renderMovKpis(filtradas);
   renderDashMovs(enriquecidas.slice(0, 8));
 }
 
 document.getElementById("mov-filtro-mes-de").addEventListener("change", (e) => {
   STATE.filtroMovMesDe = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 document.getElementById("mov-filtro-mes-ate").addEventListener("change", (e) => {
   STATE.filtroMovMesAte = e.target.value;
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 document.getElementById("btn-mov-todos-meses").addEventListener("click", () => {
@@ -820,6 +856,7 @@ document.getElementById("btn-mov-todos-meses").addEventListener("click", () => {
   STATE.filtroMovMesAte = "";
   document.getElementById("mov-filtro-mes-de").value = "";
   document.getElementById("mov-filtro-mes-ate").value = "";
+  STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 
@@ -2980,9 +3017,11 @@ function iniciarListeners() {
 
 /* ══════════════ INÍCIO ══════════════ */
 
-// "De"/"Até" começam vazios de propósito (mostra tudo por padrão) — se um
-// deles viesse pré-preenchido com o mês atual, usar só o outro campo
-// filtraria sem querer num intervalo de dois lados em vez de um só.
+// "De"/"Até" começam no mês atual (mostra só o mês corrente por padrão) —
+// o botão "Ver todos os meses" limpa os dois de uma vez pra quem quiser
+// ver o histórico inteiro.
+document.getElementById("mov-filtro-mes-de").value = STATE.filtroMovMesDe;
+document.getElementById("mov-filtro-mes-ate").value = STATE.filtroMovMesAte;
 
 iniciarBuscaLancamento();
 iniciarBuscaCategoria();

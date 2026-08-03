@@ -54,6 +54,9 @@ header.top .view-desc{font-size:13px;color:var(--ink-soft);margin-top:6px;max-wi
 .btn-danger{background:var(--debit-soft);color:#9d1c1c;border-color:var(--debit);}
 .btn-small{font-size:12px;padding:6px 12px;border-radius:7px;border:1.5px solid var(--roxo);background:transparent;color:var(--roxo);cursor:pointer;font-weight:700;}
 .btn-small:hover{background:var(--roxo);color:#fff;}
+.btn-small:disabled{opacity:.4;cursor:default;}
+.btn-small:disabled:hover{background:transparent;color:var(--roxo);}
+.paginacao{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:16px;font-size:12.5px;color:var(--ink-soft);font-weight:600;}
 
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px;margin-bottom:22px;}
 .card h2{font-family:var(--display);font-size:16.5px;margin-bottom:16px;font-weight:800;}
