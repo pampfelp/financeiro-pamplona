@@ -15,12 +15,12 @@ service cloud.firestore {
                     && request.resource.data.nome is string
                     && request.resource.data.nome.size() > 0
                     && request.resource.data.nome.size() < 200
-                    && (request.resource.data.tipo == 'Entrada' || request.resource.data.tipo == 'Saida')
+                    && (request.resource.data.tipo == 'Entrada' || request.resource.data.tipo == 'Saida' || request.resource.data.tipo == 'Transferencia')
                     && request.resource.data.categoria is string
                     && request.resource.data.categoria.size() > 0;
       allow update: if request.resource.data.nome is string
                     && request.resource.data.nome.size() > 0
-                    && (request.resource.data.tipo == 'Entrada' || request.resource.data.tipo == 'Saida')
+                    && (request.resource.data.tipo == 'Entrada' || request.resource.data.tipo == 'Saida' || request.resource.data.tipo == 'Transferencia')
                     && request.resource.data.categoria is string;
       allow delete: if true;
     }

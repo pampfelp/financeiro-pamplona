@@ -60,12 +60,36 @@
     <div class="kpi-grid" id="kpi-grid">
       <div class="empty">Carregando indicadores…</div>
     </div>
+
     <div class="card">
-      <h2>Últimas movimentações</h2>
-      <table>
-        <thead><tr><th>Data</th><th>Lançamento</th><th>Tipo</th><th>Valor</th><th>Situação</th></tr></thead>
-        <tbody id="dash-movs-body"><tr><td colspan="5" class="empty">Carregando…</td></tr></tbody>
-      </table>
+      <h2>Período de análise</h2>
+      <p class="hint" style="margin-top:0;">Escolha um intervalo de datas — os indicadores e gráficos abaixo são recalculados pra esse período. Não conta movimentação de cartão (isso fica só na aba Cartão de Crédito) nem transferência entre contas.</p>
+      <div class="row">
+        <div class="field" style="max-width:200px;">
+          <label>De</label>
+          <input type="date" id="dash-filtro-de">
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>Até</label>
+          <input type="date" id="dash-filtro-ate">
+        </div>
+      </div>
+      <div class="kpi-grid" id="dash-periodo-kpi-grid" style="margin-top:16px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Gastos por categoria</h2>
+      <div id="dash-grafico-categorias"></div>
+    </div>
+
+    <div class="card">
+      <h2>Entradas por categoria</h2>
+      <div id="dash-grafico-entradas"></div>
+    </div>
+
+    <div class="card">
+      <h2>Compras nos últimos 30 dias</h2>
+      <div id="dash-grafico-compras"></div>
     </div>
   </section>
 
@@ -98,6 +122,7 @@
             <option value="">Entrada e Saída</option>
             <option value="Entrada">Só Entrada</option>
             <option value="Saida">Só Saída</option>
+            <option value="Transferencia">Só Transferência</option>
           </select>
         </div>
         <div class="field" style="max-width:200px;">
@@ -299,6 +324,7 @@
       <select id="edit-lanc-tipo">
         <option value="Entrada">Entrada</option>
         <option value="Saida">Saída</option>
+        <option value="Transferencia">Transferência (troca entre contas)</option>
       </select>
     </div>
     <div class="field" style="margin-top:10px;">
@@ -377,6 +403,7 @@
       <select id="novo-lanc-tipo">
         <option value="Entrada">Entrada</option>
         <option value="Saida">Saída</option>
+        <option value="Transferencia">Transferência (troca entre contas)</option>
       </select>
     </div>
     <div class="field" style="margin-top:10px;">

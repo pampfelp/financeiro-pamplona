@@ -38,7 +38,9 @@ const STATE = {
   filtroMovTipoConta: "",
   filtroMovRevisado: "",
   filtroMovTipo: "",
-  buscaLivreMov: ""
+  buscaLivreMov: "",
+  filtroDashDe: primeiroDiaMesAtualISO(),
+  filtroDashAte: formatarDataISO(new Date())
 };
 
 // Evita sincronizar a mesma conexão bancária mais de uma vez por sessão —
@@ -102,6 +104,11 @@ function formatarDataISO(d) {
 function mesAtualISO() {
   const hoje = new Date();
   return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function primeiroDiaMesAtualISO() {
+  const hoje = new Date();
+  return formatarDataISO(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
 }
 
 function tsParaMillis(ts) {
@@ -259,13 +266,28 @@ function calcularDashboard() {
     const valor = Number(m.valor) || 0;
     const ehSaida = l.tipo === "Saida";
     const dataAnoMes = String(m.data || "").slice(0, 7);
+    // Uma movimentação de cartão (compra, pagamento ou crédito de
+    // rotativo) nunca mexe direto no saldo da conta — é o ciclo do
+    // cartão. O dinheiro só sai de verdade da conta quando a fatura é
+    // paga, e isso já entra como uma movimentação bancária separada
+    // (Saída, vinda do banco). Contar as duas coisas juntas inflava o
+    // saldo atual — foi o que o Felipe percebeu comparando com o Meu
+    // Pluggy.
+    const ehCartao = m.contaTipo === "cartao" || !!m.cartaoId;
+    // Transferência entre contas (dinheiro mudando de bolso) não conta
+    // como gasto pro orçamento do mês nem como algo a pagar/receber —
+    // só o saldo em conta em si é afetado (e isso o próprio saldoAtual já
+    // reflete certinho, já que os dois lados de uma troca se cancelam).
+    const ehTransferencia = l.tipo === "Transferencia";
 
     if (m.pago === true) {
-      saldoAtual += ehSaida ? -valor : valor;
-      if (ehSaida && dataAnoMes === anoMes) saidasPagasMes += valor;
+      if (!ehCartao) saldoAtual += ehSaida ? -valor : valor;
+      if (!ehTransferencia && ehSaida && dataAnoMes === anoMes) saidasPagasMes += valor;
     } else {
-      if (ehSaida) saidasNaoPagas += valor;
-      else entradasNaoPagas += valor;
+      if (!ehTransferencia) {
+        if (ehSaida) saidasNaoPagas += valor;
+        else entradasNaoPagas += valor;
+      }
       if (m.cartaoId) parcelasCartaoFuturas += valor;
     }
   });
@@ -326,7 +348,7 @@ function renderLancamentos() {
     body.innerHTML = '<tr><td colspan="4" class="empty">Nenhum lançamento cadastrado ainda.</td></tr>';
   } else {
     body.innerHTML = STATE.lancamentos.map((l) => (
-      `<tr><td>${esc(l.nome)}</td><td><span class="badge-tipo ${l.tipo}">${l.tipo === "Entrada" ? "Entrada" : "Saída"}</span></td>` +
+      `<tr><td>${esc(l.nome)}</td><td><span class="badge-tipo ${l.tipo}">${rotuloTipo(l.tipo)}</span></td>` +
       `<td>${esc(l.categoria)}</td><td><button class="btn-small" data-editar-lanc="${l.id}">Editar</button></td></tr>`
     )).join("");
     document.querySelectorAll("[data-editar-lanc]").forEach((btn) => {
@@ -341,8 +363,19 @@ const CAMPOS_BUSCA_LANCAMENTO = [
   "qa-mov-lancamento", "qa-compra-lancamento", "qa-rec-lancamento"
 ];
 
+// "Transferencia" (sem acento, igual "Saida") é o valor interno pro tipo
+// "troca entre contas" — dinheiro mudando de bolso, não é ganho nem
+// gasto de verdade, então fica de fora das somas de Entrada/Saída em
+// relatórios (KPIs, gráficos), mas continua aparecendo nas listagens.
+function rotuloTipo(tipo) {
+  if (!tipo) return "";
+  if (tipo === "Entrada") return "Entrada";
+  if (tipo === "Transferencia") return "Transferência";
+  return "Saída";
+}
+
 function rotuloLancamento(l) {
-  return `${l.nome} (${l.tipo === "Entrada" ? "Entrada" : "Saída"} — ${l.categoria})`;
+  return `${l.nome} (${rotuloTipo(l.tipo)} — ${l.categoria})`;
 }
 
 // Cada campo "Lançamento" é, por baixo dos panos, um <input type="hidden">
@@ -632,7 +665,7 @@ function filtrarPorTipo(lista) {
 // parcela...) — é contra isso que a busca livre compara.
 function textoBuscavelMovimentacao(m) {
   return [
-    m.nomeLancamento, m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : ""), m.categoria, m.responsavel,
+    m.nomeLancamento, rotuloTipo(m.tipo), m.categoria, m.responsavel,
     m.instituicao, m.contaTipo === "cartao" ? "cartão" : "", m.descricaoOrigem, m.descricaoCompra,
     m.pago ? "Pago" : "Pendente", moeda(m.valor), m.parcelaAtual ? `Parcela ${m.parcelaAtual}/${m.parcelaTotal || ""}` : ""
   ].filter(Boolean).join(" ").toLowerCase();
@@ -710,10 +743,13 @@ document.getElementById("mov-busca-livre").addEventListener("input", (e) => {
 // do calcularDashboard(): só conta como saída quando o tipo é
 // exatamente "Saida"; qualquer outra coisa (Entrada, ou lançamento
 // excluído) cai do lado de "receber".
-function renderMovKpis(filtradas) {
+function renderMovKpis(filtradas, totalCartaoAberto) {
   let totalPago = 0, qtdPago = 0, totalRecebido = 0, qtdRecebido = 0;
   let totalAPagar = 0, qtdAPagar = 0, totalAReceber = 0, qtdAReceber = 0;
   filtradas.forEach((m) => {
+    // Transferência entre contas não é ganho nem gasto — dinheiro mudando
+    // de bolso, fica de fora dessas somas.
+    if (m.tipo === "Transferencia") return;
     const valor = Number(m.valor) || 0;
     const ehSaida = m.tipo === "Saida";
     if (m.pago) {
@@ -726,7 +762,11 @@ function renderMovKpis(filtradas) {
     kpiCard("Pago no período", moeda(totalPago) + ` <small>(${qtdPago})</small>`, true) +
     kpiCard("Recebido no período", moeda(totalRecebido) + ` <small>(${qtdRecebido})</small>`, true) +
     kpiCard("A pagar no período", moeda(totalAPagar) + ` <small>(${qtdAPagar})</small>`, totalAPagar === 0) +
-    kpiCard("A receber no período", moeda(totalAReceber) + ` <small>(${qtdAReceber})</small>`, totalAReceber === 0);
+    kpiCard("A receber no período", moeda(totalAReceber) + ` <small>(${qtdAReceber})</small>`, totalAReceber === 0) +
+    // Não é filtrado pelo período De/Até — é sempre o total em aberto agora
+    // no cartão (o que vai virar cobrança no vencimento da fatura). Ver o
+    // detalhe de cada compra é lá na aba Cartão de Crédito.
+    kpiCard("A pagar no cartão", moeda(totalCartaoAberto), totalCartaoAberto === 0);
 }
 
 const PAGINA_MOV_TAMANHO = 30;
@@ -751,9 +791,18 @@ function renderMovimentacoes() {
     // sim com hora) como desempate, da mais recente pra mais antiga.
     .sort((a, b) => (a.data !== b.data ? (a.data < b.data ? 1 : -1) : tsParaMillis(b.createdAt) - tsParaMillis(a.createdAt)));
 
-  preencherFiltroPessoa(enriquecidas);
-  preencherFiltroBanco(enriquecidas);
-  const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorMes(enriquecidas)))))));
+  // Cartão tem vida própria na aba "Cartão de Crédito" — aqui em
+  // Movimentações só interessa o dinheiro que sai/entra de verdade da
+  // conta. O que fica devendo no cartão vira só um número resumido no KPI
+  // "A pagar no cartão" logo abaixo, não linha por linha.
+  const semCartao = enriquecidas.filter((m) => !(m.contaTipo === "cartao" || !!m.cartaoId));
+  const totalCartaoAberto = enriquecidas
+    .filter((m) => (m.contaTipo === "cartao" || !!m.cartaoId) && m.pago !== true)
+    .reduce((s, m) => s + (Number(m.valor) || 0), 0);
+
+  preencherFiltroPessoa(semCartao);
+  preencherFiltroBanco(semCartao);
+  const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorMes(semCartao)))))));
 
   const totalPaginasMov = Math.max(1, Math.ceil(filtradas.length / PAGINA_MOV_TAMANHO));
   STATE.paginaMov = Math.min(Math.max(1, STATE.paginaMov), totalPaginasMov);
@@ -810,7 +859,7 @@ function renderMovimentacoes() {
         `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
         `<td>${dataBR(m.data)}</td><td>${tituloPrincipal}${badgesNoTitulo}${sublabels}</td>` +
         `<td>${colunaBanco}</td>` +
-        `<td><span class="badge-tipo ${m.tipo}">${m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : "")}</span></td>` +
+        `<td><span class="badge-tipo ${m.tipo}">${rotuloTipo(m.tipo)}</span></td>` +
         `<td>${esc(m.categoria)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
         `<td><span class="stamp ${m.pago ? "pago" : "pendente"}" data-alternar-pagamento="${m.id}" data-novo-pago="${!m.pago}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
       );
@@ -837,8 +886,7 @@ function renderMovimentacoes() {
   const btnProxima = document.getElementById("btn-mov-pag-proxima");
   if (btnProxima) btnProxima.addEventListener("click", () => { STATE.paginaMov++; renderMovimentacoes(); });
 
-  renderMovKpis(filtradas);
-  renderDashMovs(enriquecidas.slice(0, 8));
+  renderMovKpis(filtradas, totalCartaoAberto);
 }
 
 document.getElementById("mov-filtro-mes-de").addEventListener("change", (e) => {
@@ -859,20 +907,6 @@ document.getElementById("btn-mov-todos-meses").addEventListener("click", () => {
   STATE.paginaMov = 1;
   renderMovimentacoes();
 });
-
-function renderDashMovs(movs) {
-  const body = document.getElementById("dash-movs-body");
-  if (!movs.length) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">Nenhuma movimentação registrada ainda.</td></tr>';
-    return;
-  }
-  body.innerHTML = movs.map((m) => (
-    `<tr><td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}${m.descricaoCompra ? `<span class="sublabel">${esc(m.descricaoCompra)}</span>` : ""}</td>` +
-    `<td><span class="badge-tipo ${m.tipo}">${m.tipo === "Entrada" ? "Entrada" : (m.tipo ? "Saída" : "")}</span></td>` +
-    `<td class="num">${moeda(m.valor)}</td>` +
-    `<td><span class="stamp ${m.pago ? "pago" : "pendente"}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
-  )).join("");
-}
 
 function renderCartaoKpis() {
   let totalLimite = 0, totalUtilizado = 0;
@@ -2162,6 +2196,221 @@ function kpiCard(label, value, positivo) {
   );
 }
 
+/* ══════════════ DASHBOARD: PERÍODO, GRÁFICOS ══════════════ */
+
+// Paleta categórica validada (skill dataviz) — ordem fixa, nunca sorteada;
+// a 9ª categoria em diante dobra em "Outras" em vez de repetir cor.
+const CORES_CATEGORICAS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+const COR_OUTRAS = "#9AA7BD";
+
+// Movimentações "normais" (sem cartão, sem transferência) dentro de um
+// intervalo de datas — base compartilhada pelos KPIs de período e pelo
+// gráfico de categorias.
+function movimentacoesNoPeriodo(de, ate) {
+  const mapaLanc = mapaLancamentos();
+  const conexoesAtivas = conexoesAtivasParaPessoal();
+  return STATE.movimentacoes
+    .filter((m) => movimentacaoVisivel(m, conexoesAtivas))
+    .filter((m) => !(m.contaTipo === "cartao" || !!m.cartaoId))
+    .map((m) => {
+      const l = mapaLanc[m.lancamentoId] || {};
+      return { ...m, tipo: l.tipo || "", categoria: l.categoria || "" };
+    })
+    .filter((m) => m.tipo !== "Transferencia")
+    .filter((m) => (!de || m.data >= de) && (!ate || m.data <= ate));
+}
+
+function renderDashPeriodoKpis(lista) {
+  let entrada = 0, saida = 0;
+  lista.forEach((m) => {
+    if (m.pago !== true) return;
+    const valor = Number(m.valor) || 0;
+    if (m.tipo === "Entrada") entrada += valor;
+    else if (m.tipo === "Saida") saida += valor;
+  });
+  document.getElementById("dash-periodo-kpi-grid").innerHTML =
+    kpiCard("Entrada no período", moeda(entrada), true) +
+    kpiCard("Saída no período", moeda(saida), true);
+}
+
+// "tipo" é "Saida" (gastos) ou "Entrada" (entradas) — cartão e
+// transferência já saem de "lista" lá na origem (movimentacoesNoPeriodo).
+function agruparPorCategoria(lista, tipo) {
+  const mapa = {};
+  lista.forEach((m) => {
+    if (m.pago !== true || m.tipo !== tipo) return;
+    const cat = m.categoria || "Sem categoria";
+    mapa[cat] = (mapa[cat] || 0) + (Number(m.valor) || 0);
+  });
+  return Object.entries(mapa)
+    .map(([categoria, valor]) => ({ categoria, valor }))
+    .sort((a, b) => b.valor - a.valor);
+}
+
+// Tooltip único, reaproveitado por todos os gráficos — cria a div uma vez
+// e só reposiciona/reescreve o conteúdo a cada hover.
+function mostrarTooltipViz(evt, texto) {
+  let tt = document.getElementById("viz-tooltip");
+  if (!tt) {
+    tt = document.createElement("div");
+    tt.id = "viz-tooltip";
+    tt.className = "viz-tooltip";
+    document.body.appendChild(tt);
+  }
+  tt.textContent = texto;
+  tt.style.left = evt.clientX + 14 + "px";
+  tt.style.top = evt.clientY + 14 + "px";
+  tt.classList.add("active");
+}
+function esconderTooltipViz() {
+  const tt = document.getElementById("viz-tooltip");
+  if (tt) tt.classList.remove("active");
+}
+
+function arcoDonut(cx, cy, rOuter, rInner, a1, a2) {
+  const large = (a2 - a1) > Math.PI ? 1 : 0;
+  const x1 = cx + rOuter * Math.cos(a1), y1 = cy + rOuter * Math.sin(a1);
+  const x2 = cx + rOuter * Math.cos(a2), y2 = cy + rOuter * Math.sin(a2);
+  const x3 = cx + rInner * Math.cos(a2), y3 = cy + rInner * Math.sin(a2);
+  const x4 = cx + rInner * Math.cos(a1), y4 = cy + rInner * Math.sin(a1);
+  return `M ${x1} ${y1} A ${rOuter} ${rOuter} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${rInner} ${rInner} 0 ${large} 0 ${x4} ${y4} Z`;
+}
+
+function renderGraficoCategorias(elId, grupos, rotuloTotal, mensagemVazia) {
+  const el = document.getElementById(elId);
+  const LIMITE = 8;
+  const principais = grupos.slice(0, LIMITE);
+  const resto = grupos.slice(LIMITE);
+  const grupoFinal = resto.length
+    ? [...principais, { categoria: "Outras", valor: resto.reduce((s, g) => s + g.valor, 0) }]
+    : principais;
+  const total = grupoFinal.reduce((s, g) => s + g.valor, 0);
+
+  if (!grupoFinal.length || total <= 0) {
+    el.innerHTML = `<div class="empty">${esc(mensagemVazia)}</div>`;
+    return;
+  }
+
+  const cx = 110, cy = 110, rOuter = 95, rInner = 58;
+  const gap = grupoFinal.length > 1 ? 0.02 : 0;
+  let anguloIni = -Math.PI / 2;
+  let pathsHtml = "";
+  let legendaHtml = "";
+  grupoFinal.forEach((g, i) => {
+    const fracao = g.valor / total;
+    const anguloFim = anguloIni + fracao * Math.PI * 2;
+    const cor = g.categoria === "Outras" ? COR_OUTRAS : CORES_CATEGORICAS[i % CORES_CATEGORICAS.length];
+    const a1 = anguloIni + gap / 2, a2 = anguloFim - gap / 2;
+    if (a2 > a1) {
+      pathsHtml += `<path d="${arcoDonut(cx, cy, rOuter, rInner, a1, a2)}" fill="${cor}" class="fatia-donut" data-tip="${esc(g.categoria)}: ${esc(moeda(g.valor))} (${(fracao * 100).toFixed(1)}%)"></path>`;
+    }
+    legendaHtml += (
+      `<div class="legenda-item"><span class="legenda-swatch" style="background:${cor}"></span>` +
+      `<span class="legenda-nome">${esc(g.categoria)}</span>` +
+      `<span class="legenda-valor">${moeda(g.valor)} <small>(${(fracao * 100).toFixed(1)}%)</small></span></div>`
+    );
+    anguloIni = anguloFim;
+  });
+
+  el.innerHTML =
+    `<div class="donut-wrap">` +
+    `<svg viewBox="0 0 220 220" class="donut-svg">${pathsHtml}` +
+    `<text x="110" y="103" text-anchor="middle" class="donut-total-label">${esc(rotuloTotal)}</text>` +
+    `<text x="110" y="127" text-anchor="middle" class="donut-total-valor">${esc(moeda(total))}</text>` +
+    `</svg>` +
+    `<div class="donut-legenda">${legendaHtml}</div>` +
+    `</div>`;
+
+  el.querySelectorAll(".fatia-donut").forEach((path) => {
+    path.addEventListener("mousemove", (e) => mostrarTooltipViz(e, path.dataset.tip));
+    path.addEventListener("mouseleave", esconderTooltipViz);
+  });
+}
+
+// Um ponto por dia, últimos 30 dias — só movimentação de conta "normal"
+// (sem cartão) já paga, tipo Saída, é o que conta como "compra" aqui.
+function computarComprasUltimos30Dias() {
+  const hoje = new Date();
+  const dias = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(hoje);
+    d.setDate(d.getDate() - i);
+    dias.push(formatarDataISO(d));
+  }
+  const porDia = {};
+  dias.forEach((d) => (porDia[d] = { qtd: 0, valor: 0 }));
+
+  const mapaLanc = mapaLancamentos();
+  const conexoesAtivas = conexoesAtivasParaPessoal();
+  STATE.movimentacoes.forEach((m) => {
+    if (!movimentacaoVisivel(m, conexoesAtivas)) return;
+    if (m.contaTipo === "cartao" || m.cartaoId) return;
+    if (m.pago !== true) return;
+    if (!porDia[m.data]) return;
+    const l = mapaLanc[m.lancamentoId] || {};
+    if (l.tipo !== "Saida") return;
+    porDia[m.data].qtd += 1;
+    porDia[m.data].valor += Number(m.valor) || 0;
+  });
+  return dias.map((d) => ({ data: d, ...porDia[d] }));
+}
+
+function svgGraficoLinha(pontos, campo, cor, formatador, titulo) {
+  const w = 640, h = 170, padL = 8, padR = 8, padT = 20, padB = 24;
+  const maxVal = Math.max(1, ...pontos.map((p) => p[campo]));
+  const passoX = pontos.length > 1 ? (w - padL - padR) / (pontos.length - 1) : 0;
+  const escalaY = (v) => padT + (h - padT - padB) * (1 - v / maxVal);
+  const pathD = pontos.map((p, i) => `${i === 0 ? "M" : "L"} ${(padL + i * passoX).toFixed(1)} ${escalaY(p[campo]).toFixed(1)}`).join(" ");
+  const xUltimo = padL + (pontos.length - 1) * passoX;
+  const areaD = `${pathD} L ${xUltimo.toFixed(1)} ${h - padB} L ${padL} ${h - padB} Z`;
+  const ultimo = pontos[pontos.length - 1];
+  const pontosHtml = pontos.map((p, i) => {
+    const x = padL + i * passoX, y = escalaY(p[campo]);
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="11" fill="transparent" class="ponto-linha" data-tip="${dataBR(p.data)}: ${esc(formatador(p[campo]))}"></circle>`;
+  }).join("");
+  return (
+    `<div class="linha-chart-titulo">${esc(titulo)}</div>` +
+    `<svg viewBox="0 0 ${w} ${h}" class="linha-svg">` +
+    `<line x1="${padL}" y1="${h - padB}" x2="${w - padR}" y2="${h - padB}" class="linha-eixo"></line>` +
+    `<path d="${areaD}" fill="${cor}" opacity="0.1"></path>` +
+    `<path d="${pathD}" fill="none" stroke="${cor}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>` +
+    `<circle cx="${xUltimo.toFixed(1)}" cy="${escalaY(ultimo[campo]).toFixed(1)}" r="4" fill="${cor}" stroke="var(--panel)" stroke-width="2"></circle>` +
+    `<text x="${xUltimo.toFixed(1)}" y="${Math.max(12, escalaY(ultimo[campo]) - 10).toFixed(1)}" text-anchor="end" class="linha-label-final">${esc(formatador(ultimo[campo]))}</text>` +
+    `<text x="${padL}" y="${h - 6}" class="linha-eixo-label">${dataBR(pontos[0].data)}</text>` +
+    `<text x="${w - padR}" y="${h - 6}" text-anchor="end" class="linha-eixo-label">${dataBR(pontos[pontos.length - 1].data)}</text>` +
+    pontosHtml +
+    `</svg>`
+  );
+}
+
+function renderGraficoCompras() {
+  const el = document.getElementById("dash-grafico-compras");
+  const pontos = computarComprasUltimos30Dias();
+  const semDados = pontos.every((p) => p.qtd === 0);
+  if (semDados) {
+    el.innerHTML = '<div class="empty">Nenhuma compra nos últimos 30 dias.</div>';
+    return;
+  }
+  el.innerHTML =
+    `<div class="linhas-grid">` +
+    `<div>${svgGraficoLinha(pontos, "qtd", CORES_CATEGORICAS[0], (v) => String(v), "Quantidade de compras por dia")}</div>` +
+    `<div>${svgGraficoLinha(pontos, "valor", CORES_CATEGORICAS[1], (v) => moeda(v), "Valor gasto por dia")}</div>` +
+    `</div>`;
+  el.querySelectorAll(".ponto-linha").forEach((ponto) => {
+    ponto.addEventListener("mousemove", (e) => mostrarTooltipViz(e, ponto.dataset.tip));
+    ponto.addEventListener("mouseleave", esconderTooltipViz);
+  });
+}
+
+document.getElementById("dash-filtro-de").addEventListener("change", (e) => {
+  STATE.filtroDashDe = e.target.value;
+  renderDashboard();
+});
+document.getElementById("dash-filtro-ate").addEventListener("change", (e) => {
+  STATE.filtroDashAte = e.target.value;
+  renderDashboard();
+});
+
 function renderDashboard() {
   const d = calcularDashboard();
   document.getElementById("kpi-grid").innerHTML =
@@ -2171,6 +2420,12 @@ function renderDashboard() {
     kpiCard("% da renda gasta no mês", d.percentualRendaGasta.toFixed(1) + "%", d.percentualRendaGasta <= 100) +
     kpiCard("Gasto permitido até hoje", moeda(d.gastoPermitidoAteHoje), true) +
     kpiCard("Parcelas futuras no cartão", moeda(d.parcelasCartaoFuturas), true);
+
+  const listaPeriodo = movimentacoesNoPeriodo(STATE.filtroDashDe, STATE.filtroDashAte);
+  renderDashPeriodoKpis(listaPeriodo);
+  renderGraficoCategorias("dash-grafico-categorias", agruparPorCategoria(listaPeriodo, "Saida"), "Total gasto", "Nenhum gasto no período selecionado.");
+  renderGraficoCategorias("dash-grafico-entradas", agruparPorCategoria(listaPeriodo, "Entrada"), "Total recebido", "Nenhuma entrada no período selecionado.");
+  renderGraficoCompras();
 }
 
 /* ══════════════ LANÇAMENTOS ══════════════ */
@@ -3022,6 +3277,8 @@ function iniciarListeners() {
 // ver o histórico inteiro.
 document.getElementById("mov-filtro-mes-de").value = STATE.filtroMovMesDe;
 document.getElementById("mov-filtro-mes-ate").value = STATE.filtroMovMesAte;
+document.getElementById("dash-filtro-de").value = STATE.filtroDashDe;
+document.getElementById("dash-filtro-ate").value = STATE.filtroDashAte;
 
 iniciarBuscaLancamento();
 iniciarBuscaCategoria();
