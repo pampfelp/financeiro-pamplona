@@ -795,9 +795,9 @@ function renderMovimentacoes() {
   // Movimentações só interessa o dinheiro que sai/entra de verdade da
   // conta. O que fica devendo no cartão vira só um número resumido no KPI
   // "A pagar no cartão" logo abaixo, não linha por linha.
-  const semCartao = enriquecidas.filter((m) => !(m.contaTipo === "cartao" || !!m.cartaoId));
+  const semCartao = enriquecidas.filter((m) => !ehMovimentacaoDeCartao(m));
   const totalCartaoAberto = enriquecidas
-    .filter((m) => (m.contaTipo === "cartao" || !!m.cartaoId) && m.pago !== true)
+    .filter((m) => ehMovimentacaoDeCartao(m) && m.pago !== true)
     .reduce((s, m) => s + (Number(m.valor) || 0), 0);
 
   preencherFiltroPessoa(semCartao);
@@ -2203,6 +2203,18 @@ function kpiCard(label, value, positivo) {
 const CORES_CATEGORICAS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
 const COR_OUTRAS = "#9AA7BD";
 
+// Categorias que o Felipe usa pra Pix bancário ligado a fatura de cartão
+// (pagar a fatura, débito de dívida de cartão parado no rotativo...) — são
+// movimentações de CONTA (contaTipo "banco", dinheiro saiu de verdade),
+// não de cartão, mas ainda assim são "assunto de cartão" pro Felipe, então
+// ficam de fora das mesmas telas/relatórios que o cartão em si.
+const CATEGORIAS_FATURA_CARTAO = ["Saldo de Fatura", "Débito Fatura"];
+
+// "m" já precisa estar enriquecida (com .categoria do lançamento).
+function ehMovimentacaoDeCartao(m) {
+  return m.contaTipo === "cartao" || !!m.cartaoId || CATEGORIAS_FATURA_CARTAO.includes(m.categoria);
+}
+
 // Movimentações "normais" (sem cartão, sem transferência) dentro de um
 // intervalo de datas — base compartilhada pelos KPIs de período e pelo
 // gráfico de categorias.
@@ -2211,11 +2223,11 @@ function movimentacoesNoPeriodo(de, ate) {
   const conexoesAtivas = conexoesAtivasParaPessoal();
   return STATE.movimentacoes
     .filter((m) => movimentacaoVisivel(m, conexoesAtivas))
-    .filter((m) => !(m.contaTipo === "cartao" || !!m.cartaoId))
     .map((m) => {
       const l = mapaLanc[m.lancamentoId] || {};
       return { ...m, tipo: l.tipo || "", categoria: l.categoria || "" };
     })
+    .filter((m) => !ehMovimentacaoDeCartao(m))
     .filter((m) => m.tipo !== "Transferencia")
     .filter((m) => (!de || m.data >= de) && (!ate || m.data <= ate));
 }
@@ -2344,11 +2356,11 @@ function computarComprasUltimos30Dias() {
   const conexoesAtivas = conexoesAtivasParaPessoal();
   STATE.movimentacoes.forEach((m) => {
     if (!movimentacaoVisivel(m, conexoesAtivas)) return;
-    if (m.contaTipo === "cartao" || m.cartaoId) return;
     if (m.pago !== true) return;
     if (!porDia[m.data]) return;
     const l = mapaLanc[m.lancamentoId] || {};
     if (l.tipo !== "Saida") return;
+    if (ehMovimentacaoDeCartao({ ...m, categoria: l.categoria })) return;
     porDia[m.data].qtd += 1;
     porDia[m.data].valor += Number(m.valor) || 0;
   });
