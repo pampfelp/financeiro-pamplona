@@ -40,7 +40,12 @@ const STATE = {
   filtroMovTipo: "",
   buscaLivreMov: "",
   filtroDashDe: primeiroDiaMesAtualISO(),
-  filtroDashAte: formatarDataISO(new Date())
+  filtroDashAte: formatarDataISO(new Date()),
+  filtroDashTipo: "",
+  filtroDashBanco: "",
+  filtroDashCategoria: "",
+  filtroDashCategoriasOutras: null,
+  paginaDashTransacoes: 1
 };
 
 // Evita sincronizar a mesma conexão bancária mais de uma vez por sessão —
@@ -2225,11 +2230,63 @@ function movimentacoesNoPeriodo(de, ate) {
     .filter((m) => movimentacaoVisivel(m, conexoesAtivas))
     .map((m) => {
       const l = mapaLanc[m.lancamentoId] || {};
-      return { ...m, tipo: l.tipo || "", categoria: l.categoria || "" };
+      const nomeLancamento = l.nome || "(excluído)";
+      const usaDescricaoComoTitulo = m.origem === "Open Finance" && !!m.descricaoOrigem && nomeLancamento === "Importado do banco";
+      return {
+        ...m, tipo: l.tipo || "", categoria: l.categoria || "", nomeLancamento,
+        tituloLista: usaDescricaoComoTitulo ? m.descricaoOrigem : nomeLancamento
+      };
     })
     .filter((m) => !ehMovimentacaoDeCartao(m))
     .filter((m) => m.tipo !== "Transferencia")
     .filter((m) => (!de || m.data >= de) && (!ate || m.data <= ate));
+}
+
+// Filtros de Tipo e Banco (dropdowns) recalculam de verdade os gráficos e
+// KPIs — Categoria (dropdown OU clique numa fatia) só filtra a LISTA de
+// transações embaixo, sem remodelar a rosca (que já É a quebra por
+// categoria; "filtrar" ali só deixaria uma fatia só, sem graça).
+function movimentacoesFiltradasDash() {
+  const base = movimentacoesNoPeriodo(STATE.filtroDashDe, STATE.filtroDashAte);
+  return base
+    .filter((m) => !STATE.filtroDashTipo || m.tipo === STATE.filtroDashTipo)
+    .filter((m) => !STATE.filtroDashBanco || (m.instituicao || "") === STATE.filtroDashBanco);
+}
+
+function transacoesListaDash(listaFiltrada) {
+  if (!STATE.filtroDashCategoria) return listaFiltrada;
+  if (STATE.filtroDashCategoria === "Outras" && STATE.filtroDashCategoriasOutras) {
+    return listaFiltrada.filter((m) => STATE.filtroDashCategoriasOutras.includes(m.categoria));
+  }
+  return listaFiltrada.filter((m) => m.categoria === STATE.filtroDashCategoria);
+}
+
+// Opções dos dropdowns vêm sempre do período inteiro (sem aplicar tipo,
+// banco ou categoria) — assim a lista de opções não encolhe conforme você
+// vai filtrando.
+function preencherFiltrosDash(listaPeriodo) {
+  const bancos = new Set();
+  const categorias = new Set();
+  listaPeriodo.forEach((m) => {
+    if (m.instituicao) bancos.add(m.instituicao);
+    if (m.categoria) categorias.add(m.categoria);
+  });
+  // O valor selecionado vem sempre de STATE (fonte da verdade), nunca do
+  // que já estava no <select> — senão uma seleção limpa por clique na
+  // rosca (que mexe em STATE, não no DOM do dropdown) ficaria com o
+  // dropdown "preso" mostrando a categoria antiga.
+  const selBanco = document.getElementById("dash-filtro-banco");
+  selBanco.innerHTML = '<option value="">Todos os bancos</option>' +
+    [...bancos].sort((a, b) => a.localeCompare(b, "pt-BR")).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  selBanco.value = STATE.filtroDashBanco;
+
+  const selCategoria = document.getElementById("dash-filtro-categoria");
+  selCategoria.innerHTML = '<option value="">Todas as categorias</option>' +
+    [...categorias].sort((a, b) => a.localeCompare(b, "pt-BR")).map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  // "Outras" não é uma opção real do dropdown (é um agrupado só do
+  // gráfico) — nesse caso o dropdown fica em branco, mesmo com a rosca
+  // destacando a fatia.
+  selCategoria.value = STATE.filtroDashCategoriasOutras ? "" : STATE.filtroDashCategoria;
 }
 
 function renderDashPeriodoKpis(lista) {
@@ -2288,11 +2345,31 @@ function arcoDonut(cx, cy, rOuter, rInner, a1, a2) {
   return `M ${x1} ${y1} A ${rOuter} ${rOuter} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${rInner} ${rInner} 0 ${large} 0 ${x4} ${y4} Z`;
 }
 
+// Clicar numa fatia (ou na legenda) seleciona aquela categoria — estilo BI:
+// a fatia clicada fica em destaque total, as outras ficam opacas, e a
+// lista de transações embaixo filtra só pra ela. Clicar de novo (ou em
+// "Limpar seleção") desfaz. "Outras" é um agrupado de várias categorias
+// pequenas — clicar nela filtra a lista por todas elas juntas.
+function alternarSelecaoCategoriaDash(categoria, categoriasReais) {
+  if (STATE.filtroDashCategoria === categoria) {
+    STATE.filtroDashCategoria = "";
+    STATE.filtroDashCategoriasOutras = null;
+  } else {
+    STATE.filtroDashCategoria = categoria;
+    STATE.filtroDashCategoriasOutras = categoriasReais || null;
+  }
+  // O <select> de categoria é resincronizado a partir de STATE dentro de
+  // preencherFiltrosDash(), chamado logo no início de renderDashboard().
+  STATE.paginaDashTransacoes = 1;
+  renderDashboard();
+}
+
 function renderGraficoCategorias(elId, grupos, rotuloTotal, mensagemVazia) {
   const el = document.getElementById(elId);
   const LIMITE = 8;
   const principais = grupos.slice(0, LIMITE);
   const resto = grupos.slice(LIMITE);
+  const categoriasOutras = resto.map((g) => g.categoria);
   const grupoFinal = resto.length
     ? [...principais, { categoria: "Outras", valor: resto.reduce((s, g) => s + g.valor, 0) }]
     : principais;
@@ -2303,6 +2380,7 @@ function renderGraficoCategorias(elId, grupos, rotuloTotal, mensagemVazia) {
     return;
   }
 
+  const selecaoAtiva = !!STATE.filtroDashCategoria;
   const cx = 110, cy = 110, rOuter = 95, rInner = 58;
   const gap = grupoFinal.length > 1 ? 0.02 : 0;
   let anguloIni = -Math.PI / 2;
@@ -2313,11 +2391,14 @@ function renderGraficoCategorias(elId, grupos, rotuloTotal, mensagemVazia) {
     const anguloFim = anguloIni + fracao * Math.PI * 2;
     const cor = g.categoria === "Outras" ? COR_OUTRAS : CORES_CATEGORICAS[i % CORES_CATEGORICAS.length];
     const a1 = anguloIni + gap / 2, a2 = anguloFim - gap / 2;
+    const selecionada = STATE.filtroDashCategoria === g.categoria;
+    const classeEstado = selecionada ? " selecionada" : (selecaoAtiva ? " dimmed" : "");
     if (a2 > a1) {
-      pathsHtml += `<path d="${arcoDonut(cx, cy, rOuter, rInner, a1, a2)}" fill="${cor}" class="fatia-donut" data-tip="${esc(g.categoria)}: ${esc(moeda(g.valor))} (${(fracao * 100).toFixed(1)}%)"></path>`;
+      pathsHtml += `<path d="${arcoDonut(cx, cy, rOuter, rInner, a1, a2)}" fill="${cor}" class="fatia-donut${classeEstado}" data-categoria="${esc(g.categoria)}" data-tip="${esc(g.categoria)}: ${esc(moeda(g.valor))} (${(fracao * 100).toFixed(1)}%)"></path>`;
     }
     legendaHtml += (
-      `<div class="legenda-item"><span class="legenda-swatch" style="background:${cor}"></span>` +
+      `<div class="legenda-item${classeEstado}" data-categoria="${esc(g.categoria)}">` +
+      `<span class="legenda-swatch" style="background:${cor}"></span>` +
       `<span class="legenda-nome">${esc(g.categoria)}</span>` +
       `<span class="legenda-valor">${moeda(g.valor)} <small>(${(fracao * 100).toFixed(1)}%)</small></span></div>`
     );
@@ -2333,10 +2414,48 @@ function renderGraficoCategorias(elId, grupos, rotuloTotal, mensagemVazia) {
     `<div class="donut-legenda">${legendaHtml}</div>` +
     `</div>`;
 
+  const aoClicar = (categoria) => alternarSelecaoCategoriaDash(categoria, categoria === "Outras" ? categoriasOutras : null);
   el.querySelectorAll(".fatia-donut").forEach((path) => {
     path.addEventListener("mousemove", (e) => mostrarTooltipViz(e, path.dataset.tip));
     path.addEventListener("mouseleave", esconderTooltipViz);
+    path.addEventListener("click", () => aoClicar(path.dataset.categoria));
   });
+  el.querySelectorAll(".legenda-item").forEach((item) => {
+    item.addEventListener("click", () => aoClicar(item.dataset.categoria));
+  });
+}
+
+const PAGINA_DASH_TAMANHO = 10;
+
+function renderTransacoesDash(lista) {
+  const totalPaginas = Math.max(1, Math.ceil(lista.length / PAGINA_DASH_TAMANHO));
+  STATE.paginaDashTransacoes = Math.min(Math.max(1, STATE.paginaDashTransacoes), totalPaginas);
+  const inicio = (STATE.paginaDashTransacoes - 1) * PAGINA_DASH_TAMANHO;
+  const pagina = lista.slice(inicio, inicio + PAGINA_DASH_TAMANHO);
+
+  const body = document.getElementById("dash-transacoes-body");
+  body.innerHTML = pagina.length
+    ? pagina.map((m) => (
+        `<tr><td>${dataBR(m.data)}</td><td>${esc(m.tituloLista)}</td>` +
+        `<td>${esc(m.instituicao || "—")}</td>` +
+        `<td><span class="badge-tipo ${m.tipo}">${rotuloTipo(m.tipo)}</span></td>` +
+        `<td>${esc(m.categoria)}</td><td class="num">${moeda(m.valor)}</td>` +
+        `<td><span class="stamp ${m.pago ? "pago" : "pendente"}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
+      )).join("")
+    : '<tr><td colspan="7" class="empty">Nenhuma transação com esse filtro.</td></tr>';
+
+  const paginacao = document.getElementById("dash-transacoes-paginacao");
+  paginacao.innerHTML = lista.length ? (
+    `<button class="btn btn-small" id="btn-dash-pag-anterior" ${STATE.paginaDashTransacoes <= 1 ? "disabled" : ""}>‹ Anterior</button>` +
+    `<span>Página ${STATE.paginaDashTransacoes} de ${totalPaginas} — ${lista.length} transação(ões)</span>` +
+    `<button class="btn btn-small" id="btn-dash-pag-proxima" ${STATE.paginaDashTransacoes >= totalPaginas ? "disabled" : ""}>Próxima ›</button>`
+  ) : "";
+  const btnAnterior = document.getElementById("btn-dash-pag-anterior");
+  if (btnAnterior) btnAnterior.addEventListener("click", () => { STATE.paginaDashTransacoes--; renderDashboard(); });
+  const btnProxima = document.getElementById("btn-dash-pag-proxima");
+  if (btnProxima) btnProxima.addEventListener("click", () => { STATE.paginaDashTransacoes++; renderDashboard(); });
+
+  document.getElementById("btn-dash-limpar-selecao").style.display = STATE.filtroDashCategoria ? "" : "none";
 }
 
 // Um ponto por dia, últimos 30 dias — só movimentação de conta "normal"
@@ -2416,10 +2535,35 @@ function renderGraficoCompras() {
 
 document.getElementById("dash-filtro-de").addEventListener("change", (e) => {
   STATE.filtroDashDe = e.target.value;
+  STATE.paginaDashTransacoes = 1;
   renderDashboard();
 });
 document.getElementById("dash-filtro-ate").addEventListener("change", (e) => {
   STATE.filtroDashAte = e.target.value;
+  STATE.paginaDashTransacoes = 1;
+  renderDashboard();
+});
+document.getElementById("dash-filtro-tipo").addEventListener("change", (e) => {
+  STATE.filtroDashTipo = e.target.value;
+  STATE.paginaDashTransacoes = 1;
+  renderDashboard();
+});
+document.getElementById("dash-filtro-banco").addEventListener("change", (e) => {
+  STATE.filtroDashBanco = e.target.value;
+  STATE.paginaDashTransacoes = 1;
+  renderDashboard();
+});
+document.getElementById("dash-filtro-categoria").addEventListener("change", (e) => {
+  STATE.filtroDashCategoria = e.target.value;
+  STATE.filtroDashCategoriasOutras = null;
+  STATE.paginaDashTransacoes = 1;
+  renderDashboard();
+});
+document.getElementById("btn-dash-limpar-selecao").addEventListener("click", () => {
+  STATE.filtroDashCategoria = "";
+  STATE.filtroDashCategoriasOutras = null;
+  document.getElementById("dash-filtro-categoria").value = "";
+  STATE.paginaDashTransacoes = 1;
   renderDashboard();
 });
 
@@ -2434,9 +2578,12 @@ function renderDashboard() {
     kpiCard("Parcelas futuras no cartão", moeda(d.parcelasCartaoFuturas), true);
 
   const listaPeriodo = movimentacoesNoPeriodo(STATE.filtroDashDe, STATE.filtroDashAte);
-  renderDashPeriodoKpis(listaPeriodo);
-  renderGraficoCategorias("dash-grafico-categorias", agruparPorCategoria(listaPeriodo, "Saida"), "Total gasto", "Nenhum gasto no período selecionado.");
-  renderGraficoCategorias("dash-grafico-entradas", agruparPorCategoria(listaPeriodo, "Entrada"), "Total recebido", "Nenhuma entrada no período selecionado.");
+  preencherFiltrosDash(listaPeriodo);
+  const listaFiltrada = movimentacoesFiltradasDash();
+  renderDashPeriodoKpis(listaFiltrada);
+  renderGraficoCategorias("dash-grafico-categorias", agruparPorCategoria(listaFiltrada, "Saida"), "Total gasto", "Nenhum gasto no período selecionado.");
+  renderGraficoCategorias("dash-grafico-entradas", agruparPorCategoria(listaFiltrada, "Entrada"), "Total recebido", "Nenhuma entrada no período selecionado.");
+  renderTransacoesDash(transacoesListaDash(listaFiltrada));
   renderGraficoCompras();
 }
 

@@ -63,7 +63,7 @@
 
     <div class="card">
       <h2>Período de análise</h2>
-      <p class="hint" style="margin-top:0;">Escolha um intervalo de datas — os indicadores e gráficos abaixo são recalculados pra esse período. Não conta movimentação de cartão (isso fica só na aba Cartão de Crédito) nem transferência entre contas.</p>
+      <p class="hint" style="margin-top:0;">Escolha um intervalo de datas e filtros — os indicadores, gráficos e a lista de transações abaixo são recalculados juntos. Não conta movimentação de cartão (isso fica só na aba Cartão de Crédito) nem transferência entre contas.</p>
       <div class="row">
         <div class="field" style="max-width:200px;">
           <label>De</label>
@@ -73,18 +73,47 @@
           <label>Até</label>
           <input type="date" id="dash-filtro-ate">
         </div>
+        <div class="field" style="max-width:170px;">
+          <label>Tipo</label>
+          <select id="dash-filtro-tipo">
+            <option value="">Entrada e Saída</option>
+            <option value="Entrada">Só Entrada</option>
+            <option value="Saida">Só Saída</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:190px;">
+          <label>Banco</label>
+          <select id="dash-filtro-banco"><option value="">Todos os bancos</option></select>
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>Categoria</label>
+          <select id="dash-filtro-categoria"><option value="">Todas as categorias</option></select>
+        </div>
       </div>
       <div class="kpi-grid" id="dash-periodo-kpi-grid" style="margin-top:16px;"></div>
     </div>
 
     <div class="card">
       <h2>Gastos por categoria</h2>
+      <p class="hint" style="margin-top:0;">Clique numa fatia (ou na legenda) pra ver só as transações dela na lista abaixo. Clique de novo pra limpar.</p>
       <div id="dash-grafico-categorias"></div>
     </div>
 
     <div class="card">
       <h2>Entradas por categoria</h2>
       <div id="dash-grafico-entradas"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <span>Transações do período</span>
+        <button class="btn-small" id="btn-dash-limpar-selecao" style="display:none;">✕ Limpar seleção</button>
+      </h2>
+      <table>
+        <thead><tr><th>Data</th><th>Lançamento</th><th>Banco</th><th>Tipo</th><th>Categoria</th><th>Valor</th><th>Situação</th></tr></thead>
+        <tbody id="dash-transacoes-body"><tr><td colspan="7" class="empty">Carregando…</td></tr></tbody>
+      </table>
+      <div class="paginacao" id="dash-transacoes-paginacao"></div>
     </div>
 
     <div class="card">
