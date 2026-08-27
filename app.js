@@ -16,6 +16,18 @@ import {
   onSnapshot, query, orderBy, where, getDocs, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
+// Nunca emoji (padrão do segundo cérebro, decisoes.md #5) — sempre SVG
+// inline estilo "feather": viewBox 24x24, stroke=currentColor, traço fino
+// arredondado, dentro de <span class="ico">. Usado nos botões/títulos
+// montados via template string em JS; os ícones do menu lateral (estáticos)
+// ficam direto no index.html no mesmo estilo.
+const ICONS = {
+  cartao: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>`,
+  banco: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 3 21 9 3 9"/><line x1="5" y1="9" x2="5" y2="21"/><line x1="9" y1="9" x2="9" y2="21"/><line x1="15" y1="9" x2="15" y2="21"/><line x1="19" y1="9" x2="19" y2="21"/><line x1="3" y1="21" x2="21" y2="21"/></svg>`,
+  atualizar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+  lapis: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
+};
+
 const STATE = {
   lancamentos: [],
   movimentacoes: [],
@@ -30,14 +42,15 @@ const STATE = {
   cartoesOpenFinance: [],
   regrasCategorizacaoOF: [],
   config: { rendaMensal: 0, saldoInicial: 0 },
-  filtroMovMesDe: mesAtualISO(),
-  filtroMovMesAte: mesAtualISO(),
+  filtroMovDataDe: primeiroDiaMesAtualISO(),
+  filtroMovDataAte: ultimoDiaMesAtualISO(),
   paginaMov: 1,
   filtroMovPessoa: "",
   filtroMovBanco: "",
   filtroMovTipoConta: "",
   filtroMovRevisado: "",
   filtroMovTipo: "",
+  filtroMovPago: "",
   buscaLivreMov: "",
   filtroDashDe: primeiroDiaMesAtualISO(),
   filtroDashAte: formatarDataISO(new Date()),
@@ -106,14 +119,14 @@ function formatarDataISO(d) {
   return `${ano}-${mes}-${dia}`;
 }
 
-function mesAtualISO() {
-  const hoje = new Date();
-  return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function primeiroDiaMesAtualISO() {
   const hoje = new Date();
   return formatarDataISO(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
+}
+
+function ultimoDiaMesAtualISO() {
+  const hoje = new Date();
+  return formatarDataISO(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0));
 }
 
 function tsParaMillis(ts) {
@@ -137,6 +150,32 @@ function mostrarToast(msg, erro) {
   clearTimeout(mostrarToast._t);
   mostrarToast._t = setTimeout(() => el.classList.add("hidden"), erro ? 7000 : 3500);
 }
+
+// Substituto customizado pra confirm() nativo do navegador — nunca usar
+// confirm()/alert()/prompt() nativos (padrão do segundo cérebro, decisoes.md
+// #3). Uso: if (!(await confirmar("Excluir X?"))) return;
+let resolverConfirmar = null;
+function confirmar(mensagem, { textoConfirmar = "Excluir", textoCancelar = "Cancelar" } = {}) {
+  return new Promise((resolve) => {
+    resolverConfirmar = resolve;
+    document.getElementById("confirmar-mensagem").textContent = mensagem;
+    document.getElementById("btn-confirmar-ok").textContent = textoConfirmar;
+    document.getElementById("btn-confirmar-cancelar").textContent = textoCancelar;
+    document.getElementById("modal-confirmar").classList.add("active");
+  });
+}
+function fecharModalConfirmar(resultado) {
+  document.getElementById("modal-confirmar").classList.remove("active");
+  if (resolverConfirmar) {
+    resolverConfirmar(resultado);
+    resolverConfirmar = null;
+  }
+}
+document.getElementById("btn-confirmar-cancelar").addEventListener("click", () => fecharModalConfirmar(false));
+document.getElementById("btn-confirmar-ok").addEventListener("click", () => fecharModalConfirmar(true));
+document.getElementById("modal-confirmar").addEventListener("click", (e) => {
+  if (e.target.id === "modal-confirmar") fecharModalConfirmar(false);
+});
 
 function mapaLancamentos() {
   const m = {};
@@ -630,14 +669,20 @@ document.getElementById("btn-salvar-nova-pessoa").addEventListener("click", asyn
   }
 });
 
-function filtrarPorMes(lista) {
-  if (!STATE.filtroMovMesDe && !STATE.filtroMovMesAte) return lista;
+function filtrarPorData(lista) {
+  if (!STATE.filtroMovDataDe && !STATE.filtroMovDataAte) return lista;
   return lista.filter((m) => {
-    const anoMes = String(m.data || "").slice(0, 7);
-    if (STATE.filtroMovMesDe && anoMes < STATE.filtroMovMesDe) return false;
-    if (STATE.filtroMovMesAte && anoMes > STATE.filtroMovMesAte) return false;
+    const data = String(m.data || "");
+    if (STATE.filtroMovDataDe && data < STATE.filtroMovDataDe) return false;
+    if (STATE.filtroMovDataAte && data > STATE.filtroMovDataAte) return false;
     return true;
   });
+}
+
+function filtrarPorPago(lista) {
+  if (STATE.filtroMovPago === "") return lista;
+  const querPago = STATE.filtroMovPago === "true";
+  return lista.filter((m) => !!m.pago === querPago);
 }
 
 function filtrarPorPessoa(lista) {
@@ -807,7 +852,7 @@ function renderMovimentacoes() {
 
   preencherFiltroPessoa(semCartao);
   preencherFiltroBanco(semCartao);
-  const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorMes(semCartao)))))));
+  const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorPago(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorData(semCartao))))))));
 
   const totalPaginasMov = Math.max(1, Math.ceil(filtradas.length / PAGINA_MOV_TAMANHO));
   STATE.paginaMov = Math.min(Math.max(1, STATE.paginaMov), totalPaginasMov);
@@ -816,9 +861,9 @@ function renderMovimentacoes() {
 
   const body = document.getElementById("movs-body");
   if (!filtradas.length) {
-    const temFiltro = STATE.filtroMovMesDe || STATE.filtroMovMesAte || STATE.filtroMovPessoa
+    const temFiltro = STATE.filtroMovDataDe || STATE.filtroMovDataAte || STATE.filtroMovPessoa
       || STATE.filtroMovBanco || STATE.filtroMovTipoConta || STATE.filtroMovRevisado
-      || STATE.filtroMovTipo || STATE.buscaLivreMov;
+      || STATE.filtroMovTipo || STATE.filtroMovPago || STATE.buscaLivreMov;
     body.innerHTML = `<tr><td colspan="8" class="empty">${temFiltro ? "Nenhuma movimentação com esse filtro." : "Nenhuma movimentação registrada ainda."}</td></tr>`;
   } else {
     body.innerHTML = paginadas.map((m) => {
@@ -894,21 +939,44 @@ function renderMovimentacoes() {
   renderMovKpis(filtradas, totalCartaoAberto);
 }
 
-document.getElementById("mov-filtro-mes-de").addEventListener("change", (e) => {
-  STATE.filtroMovMesDe = e.target.value;
+// Editar De/Até na mão volta o "Período rápido" pra "Personalizado" — senão
+// ficaria mostrando "Últimos 30 dias" com datas que você mudou à mão.
+document.getElementById("mov-filtro-data-de").addEventListener("change", (e) => {
+  STATE.filtroMovDataDe = e.target.value;
+  document.getElementById("mov-filtro-periodo-rapido").value = "";
   STATE.paginaMov = 1;
   renderMovimentacoes();
 });
-document.getElementById("mov-filtro-mes-ate").addEventListener("change", (e) => {
-  STATE.filtroMovMesAte = e.target.value;
+document.getElementById("mov-filtro-data-ate").addEventListener("change", (e) => {
+  STATE.filtroMovDataAte = e.target.value;
+  document.getElementById("mov-filtro-periodo-rapido").value = "";
+  STATE.paginaMov = 1;
+  renderMovimentacoes();
+});
+document.getElementById("mov-filtro-periodo-rapido").addEventListener("change", (e) => {
+  const dias = Number(e.target.value);
+  if (!dias) return; // "Personalizado" — não mexe nas datas já escolhidas
+  const hoje = new Date();
+  const de = new Date(hoje);
+  de.setDate(de.getDate() - (dias - 1));
+  STATE.filtroMovDataDe = formatarDataISO(de);
+  STATE.filtroMovDataAte = formatarDataISO(hoje);
+  document.getElementById("mov-filtro-data-de").value = STATE.filtroMovDataDe;
+  document.getElementById("mov-filtro-data-ate").value = STATE.filtroMovDataAte;
+  STATE.paginaMov = 1;
+  renderMovimentacoes();
+});
+document.getElementById("mov-filtro-pago").addEventListener("change", (e) => {
+  STATE.filtroMovPago = e.target.value;
   STATE.paginaMov = 1;
   renderMovimentacoes();
 });
 document.getElementById("btn-mov-todos-meses").addEventListener("click", () => {
-  STATE.filtroMovMesDe = "";
-  STATE.filtroMovMesAte = "";
-  document.getElementById("mov-filtro-mes-de").value = "";
-  document.getElementById("mov-filtro-mes-ate").value = "";
+  STATE.filtroMovDataDe = "";
+  STATE.filtroMovDataAte = "";
+  document.getElementById("mov-filtro-data-de").value = "";
+  document.getElementById("mov-filtro-data-ate").value = "";
+  document.getElementById("mov-filtro-periodo-rapido").value = "";
   STATE.paginaMov = 1;
   renderMovimentacoes();
 });
@@ -1008,7 +1076,7 @@ document.getElementById("btn-salvar-edicao-cartao").addEventListener("click", as
 
 document.getElementById("btn-excluir-cartao").addEventListener("click", async () => {
   const id = document.getElementById("edit-cartao-id").value;
-  if (!confirm("Excluir este cartão? Movimentações e compras já lançadas continuam existindo, só deixam de referenciar um cartão válido.")) return;
+  if (!(await confirmar("Excluir este cartão? Movimentações e compras já lançadas continuam existindo, só deixam de referenciar um cartão válido."))) return;
   try {
     await deleteDoc(doc(db, "cartoes", id));
     mostrarToast("Cartão excluído.");
@@ -1027,7 +1095,7 @@ function preencherSelectCartoes() {
   // do banco (limiteDisponivel), não é calculado somando movimentações
   // como no cadastro manual.
   const opcoesOpenFinance = STATE.cartoesOpenFinance.map((c) => (
-    `<option value="${c.id}">🏦 ${esc(c.instituicao)} — ${esc(c.nome)} (disponível ${moeda(c.limiteDisponivel)})</option>`
+    `<option value="${c.id}">${esc(c.instituicao)} — ${esc(c.nome)} (disponível ${moeda(c.limiteDisponivel)})</option>`
   )).join("");
   const opcoes = opcoesManuais + opcoesOpenFinance;
   ["edit-compra-cartao", "qa-compra-cartao"].forEach((id) => {
@@ -1325,14 +1393,14 @@ async function salvarEdicaoCompra(forcarRecalculo) {
 }
 
 document.getElementById("btn-salvar-edicao-compra").addEventListener("click", () => salvarEdicaoCompra(false));
-document.getElementById("btn-recalcular-compra").addEventListener("click", () => {
-  if (!confirm("Recalcular as parcelas ainda não pagas desta compra com os dados atuais? Útil se elas foram criadas antes de algum ajuste na regra do sistema.")) return;
+document.getElementById("btn-recalcular-compra").addEventListener("click", async () => {
+  if (!(await confirmar("Recalcular as parcelas ainda não pagas desta compra com os dados atuais? Útil se elas foram criadas antes de algum ajuste na regra do sistema.", { textoConfirmar: "Recalcular" }))) return;
   salvarEdicaoCompra(true);
 });
 
 document.getElementById("btn-excluir-compra").addEventListener("click", async () => {
   const id = document.getElementById("edit-compra-id").value;
-  if (!confirm("Excluir esta compra? As parcelas ainda não pagas serão removidas de Movimentações. Parcelas já pagas continuam registradas.")) return;
+  if (!(await confirmar("Excluir esta compra? As parcelas ainda não pagas serão removidas de Movimentações. Parcelas já pagas continuam registradas."))) return;
   try {
     const parcelasNaoPagas = STATE.movimentacoes.filter((m) => m.compraParceladaId === id && m.pago !== true);
     for (const p of parcelasNaoPagas) {
@@ -1394,7 +1462,7 @@ function renderConexoes() {
       `<div class="conexao-topo"><h3>${esc(c.instituicao || "Banco")}</h3><span class="stamp ${statusClasse}">${statusTexto}</span></div>` +
       `<div class="conexao-info">Última sincronização: ${esc(ultimaSinc)}</div>` +
       `<label class="conexao-toggle"><input type="checkbox" data-alternar-inclusao-pessoal="${c.id}" data-novo-valor="${!incluido}" ${incluido ? "checked" : ""}> Incluir no uso pessoal (Dashboard e Movimentações)</label>` +
-      `<button class="btn btn-primary" data-sincronizar-conexao="${c.id}">🔄 Sincronizar agora</button>` +
+      `<button class="btn btn-primary" data-sincronizar-conexao="${c.id}"><span class="ico">${ICONS.atualizar}</span>Sincronizar agora</button>` +
       `</div>`
     );
   }).join("");
@@ -1438,7 +1506,7 @@ function renderCartoesOpenFinance() {
           `<div class="conexao-info" style="margin-top:10px;">Disponível: <strong>${moeda(c.limiteDisponivel)}</strong></div>` +
           `<div class="conexao-info">Fechamento: ${rotuloFechamento} · Vencimento: ${rotuloVencimento}</div>` +
           `<div class="conexao-info">Atualizado em: ${c.ultimaSincronizacao ? fmtDataHora(c.ultimaSincronizacao) : "—"}</div>` +
-          `<button class="btn-small" style="margin-top:8px;" data-configurar-ciclo="${c.id}">✏️ Configurar dia de fechamento/vencimento</button>` +
+          `<button class="btn-small" style="margin-top:8px;" data-configurar-ciclo="${c.id}"><span class="ico">${ICONS.lapis}</span>Configurar dia de fechamento/vencimento</button>` +
           `</div>`
         );
       }).join("");
@@ -1783,9 +1851,9 @@ async function recalcularDatasCartaoOF(cartaoOF) {
 }
 
 // Mantém o "pago"/"pendente" de todas as transações de cartão de uma
-// instituição em dia sozinho, sem precisar da ferramenta manual de
-// conciliação (ver "🧮 Conciliar fatura (rotativo)"): percorre TODAS as
-// transações de cartão daquele banco em ordem cronológica e aplica a regra
+// instituição em dia sozinho, sem precisar de conciliação manual: percorre
+// TODAS as transações de cartão daquele banco em ordem cronológica e
+// aplica a regra
 // que qualquer cartão de crédito usa na prática — cada pagamento/estorno
 // (crédito) quita as compras mais antigas em aberto primeiro (FIFO), até
 // esgotar o valor do crédito. O que sobrar em aberto é a dívida atual real.
@@ -2169,7 +2237,7 @@ document.getElementById("btn-salvar-edicao-rec").addEventListener("click", async
 
 document.getElementById("btn-excluir-recorrente").addEventListener("click", async () => {
   const id = document.getElementById("edit-rec-id").value;
-  if (!confirm("Excluir este custo recorrente? Movimentações já lançadas por ele não são afetadas.")) return;
+  if (!(await confirmar("Excluir este custo recorrente? Movimentações já lançadas por ele não são afetadas."))) return;
   try {
     await deleteDoc(doc(db, "recorrentes", id));
     mostrarToast("Custo recorrente excluído.");
@@ -2782,7 +2850,7 @@ document.getElementById("btn-salvar-edicao-mov").addEventListener("click", async
 
 document.getElementById("btn-excluir-mov").addEventListener("click", async () => {
   const id = document.getElementById("edit-mov-id").value;
-  if (!confirm("Excluir esta movimentação? Isso fica registrado no Histórico de Alterações.")) return;
+  if (!(await confirmar("Excluir esta movimentação? Isso fica registrado no Histórico de Alterações."))) return;
   const atual = STATE.movimentacoes.find((m) => m.id === id);
   if (!atual) return;
   const mapaLanc = mapaLancamentos();
@@ -3087,7 +3155,7 @@ function calcularPlanoInfo(p) {
 
   let previsaoTexto = "Defina uma meta mensal ou use o simulador abaixo.";
   if (concluido) {
-    previsaoTexto = "Meta alcançada! 🎉";
+    previsaoTexto = "Meta alcançada!";
   } else if (aporteMensal > 0) {
     const meses = Math.ceil(falta / aporteMensal);
     const dataPrevista = new Date();
@@ -3269,7 +3337,7 @@ document.getElementById("btn-salvar-plano").addEventListener("click", async () =
 document.getElementById("btn-excluir-plano").addEventListener("click", async () => {
   const id = document.getElementById("plano-id").value;
   if (!id) return;
-  if (!confirm("Excluir este plano? O histórico de aportes dele também será perdido.")) return;
+  if (!(await confirmar("Excluir este plano? O histórico de aportes dele também será perdido."))) return;
   try {
     await deleteDoc(doc(db, "planos", id));
     mostrarToast("Plano excluído.");
@@ -3432,10 +3500,10 @@ function iniciarListeners() {
 /* ══════════════ INÍCIO ══════════════ */
 
 // "De"/"Até" começam no mês atual (mostra só o mês corrente por padrão) —
-// o botão "Ver todos os meses" limpa os dois de uma vez pra quem quiser
-// ver o histórico inteiro.
-document.getElementById("mov-filtro-mes-de").value = STATE.filtroMovMesDe;
-document.getElementById("mov-filtro-mes-ate").value = STATE.filtroMovMesAte;
+// o botão "Ver todo o histórico" limpa os dois de uma vez pra quem quiser
+// ver tudo.
+document.getElementById("mov-filtro-data-de").value = STATE.filtroMovDataDe;
+document.getElementById("mov-filtro-data-ate").value = STATE.filtroMovDataAte;
 document.getElementById("dash-filtro-de").value = STATE.filtroDashDe;
 document.getElementById("dash-filtro-ate").value = STATE.filtroDashAte;
 

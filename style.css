@@ -28,13 +28,21 @@ button,input,select,textarea{font-family:var(--sans);}
 .sidebar a:hover{background:rgba(255,255,255,.08);color:#fff;}
 .sidebar a.active{background:var(--accent);color:#fff;}
 
+/* Ícone SVG inline estilo "feather" — nunca emoji (ver decisoes.md #5 do
+   segundo cérebro). Usado no menu lateral e em botões montados via JS. */
+.ico{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;}
+.ico svg{width:100%;height:100%;}
+button .ico, .btn .ico, .btn-small .ico, .btn-primary .ico{width:15px;height:15px;margin-right:6px;vertical-align:-3px;}
+h2 .ico{width:17px;height:17px;margin-right:7px;vertical-align:-3px;}
+
 .mobile-topbar{display:none;}
 .sidebar-backdrop{position:fixed;inset:0;background:rgba(10,18,32,.45);z-index:125;display:none;}
 .sidebar-backdrop.active{display:block;}
 @media(max-width:900px){
   body{flex-direction:column;}
   .mobile-topbar{display:flex;align-items:center;gap:12px;background:var(--roxo);color:#fff;padding:13px 16px;position:sticky;top:0;z-index:120;width:100%;}
-  .hamburger{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);color:#fff;width:36px;height:36px;border-radius:10px;font-size:16px;cursor:pointer;flex:none;}
+  .hamburger{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);color:#fff;width:36px;height:36px;border-radius:10px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;}
+  .hamburger svg{width:19px;height:19px;}
   .sidebar{position:fixed;left:0;top:0;height:100vh;transform:translateX(-100%);transition:transform .2s ease;z-index:130;}
   .sidebar.mobile-open{transform:translateX(0);}
   .app{width:100%;}
