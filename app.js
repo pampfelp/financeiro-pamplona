@@ -836,10 +836,14 @@ function renderMovimentacoes() {
         descricaoCompra: compra ? compra.descricao : ""
       };
     })
-    // "data" só tem dia (sem hora), então duas movimentações do mesmo dia
-    // empatam nela — usa "createdAt" (quando o registro foi criado, esse
-    // sim com hora) como desempate, da mais recente pra mais antiga.
-    .sort((a, b) => (a.data !== b.data ? (a.data < b.data ? 1 : -1) : tsParaMillis(b.createdAt) - tsParaMillis(a.createdAt)));
+    // Lançamento manual/recorrente não tem hora real (ninguém digita "que
+    // horas" pagou o aluguel) — sempre no topo da lista, na frente de
+    // qualquer transação vinda do banco, não misturado por data/hora.
+    // Entre os vindos do banco, ordena por data+hora de verdade (não só
+    // data — "horaTransacaoReal" existe desde que corrigimos o fuso
+    // horário da Pluggy); "createdAt" só desempata o que ainda não tem
+    // hora real (registro antigo, de antes dessa correção).
+    .sort(ordenarPorDataHoraComManualNoTopo);
 
   // Cartão tem vida própria na aba "Cartão de Crédito" — aqui em
   // Movimentações só interessa o dinheiro que sai/entra de verdade da
@@ -907,7 +911,7 @@ function renderMovimentacoes() {
       ].filter(Boolean).map((s) => `<span class="sublabel">${esc(s)}</span>`).join("");
       return (
         `<tr class="linha-clicavel" data-abrir-mov="${m.id}">` +
-        `<td>${dataBR(m.data)}</td><td>${tituloPrincipal}${badgesNoTitulo}${sublabels}</td>` +
+        `<td>${dataBR(m.data)}${m.horaTransacaoReal ? `<span class="sublabel">${esc(m.horaTransacaoReal)}</span>` : ""}</td><td>${tituloPrincipal}${badgesNoTitulo}${sublabels}</td>` +
         `<td>${colunaBanco}</td>` +
         `<td><span class="badge-tipo ${m.tipo}">${rotuloTipo(m.tipo)}</span></td>` +
         `<td>${esc(m.categoria)}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
@@ -1689,7 +1693,7 @@ function gerarPrevisoesFuturas(batch, t, meta, grupoParcelamento, lancamentoId, 
   // Soma os meses a partir da data de VENCIMENTO desta parcela (não da
   // data da compra) — assim as parcelas futuras também caem certinho no
   // dia de vencimento da fatura, não no dia em que a compra aconteceu.
-  const dataBaseTransacao = parseDataLocal(dataVencimentoBase || String(t.date || "").slice(0, 10));
+  const dataBaseTransacao = parseDataLocal(dataVencimentoBase || (t.date ? formatarDataISO(new Date(t.date)) : formatarDataISO(new Date())));
   for (let n = meta.installmentNumber + 1; n <= meta.totalInstallments; n++) {
     const marcador = grupoParcelamento + "#" + n;
     if (jaExistentesOuCriadas.has(marcador)) continue;
@@ -2017,12 +2021,25 @@ async function sincronizarConexao(conexaoId) {
         valorTotalCompra: meta.totalAmount != null ? Number(meta.totalAmount) : null
       } : { parcelaAtual: null, parcelaTotal: null, valorTotalCompra: null };
 
-      const dataTransacao = String(t.date || dataAte).slice(0, 10);
+      // A Pluggy manda "date" como um instante de verdade (ex.:
+      // "2026-08-30T00:08:00.000Z" = 29/08 21h08 no horário do Brasil) —
+      // pegar só os 10 primeiros caracteres da string pegava a data em
+      // UTC, não a local, então uma compra feita à noite virava "dia
+      // seguinte" no sistema (bug real, achado comparando com o extrato
+      // do banco). new Date(t.date) + formatarDataISO()/getHours()
+      // convertem pro fuso local de verdade (o do navegador — para uso
+      // pessoal no Brasil, é o fuso certo). Sem "date" (não deveria
+      // acontecer, mas por segurança), cai pro fim do período pedido.
+      const instanteTransacao = t.date ? new Date(t.date) : parseDataLocal(dataAte);
+      const dataTransacao = formatarDataISO(instanteTransacao);
+      const horaTransacao = t.date
+        ? `${String(instanteTransacao.getHours()).padStart(2, "0")}:${String(instanteTransacao.getMinutes()).padStart(2, "0")}`
+        : "";
       // Pra cartão, o que entra em Movimentações é a data de VENCIMENTO da
       // fatura (mesma regra do cadastro manual de cartões) — não a data em
       // que a compra aconteceu. Assim, pagar a fatura = tudo daquele ciclo
-      // aparece junto na mesma data. Guarda a data real da transação à
-      // parte, só pra referência (mostrada como sublabel).
+      // aparece junto na mesma data. Guarda a data (e hora) real da
+      // transação à parte, só pra referência (mostrada como sublabel).
       const cartaoOF = t._contaTipo === "cartao" ? mapaCartaoOFPorConta[t.accountId] : null;
       const vencimentoCalculado = cartaoOF ? calcularVencimentoCartaoOF(cartaoOF, dataTransacao) : null;
       const dataParaMovimentacao = vencimentoCalculado || dataTransacao;
@@ -2070,6 +2087,7 @@ async function sincronizarConexao(conexaoId) {
         origem: "Open Finance", pluggyTransactionId: t.id, conexaoId: conexaoId, instituicao: conexao.instituicao || "Banco",
         contaTipo: t._contaTipo || "banco", revisado: jaCategorizadaComConfianca, previsao: false,
         descricaoOrigem: t.description || t.descriptionRaw || "", dataTransacaoReal: dataTransacao,
+        horaTransacaoReal: horaTransacao,
         chaveCategorizador: chave, grupoParcelamento, ...dadosParcela
       };
 
@@ -2307,7 +2325,23 @@ function movimentacoesNoPeriodo(de, ate) {
     })
     .filter((m) => !ehMovimentacaoDeCartao(m))
     .filter((m) => m.tipo !== "Transferencia")
-    .filter((m) => (!de || m.data >= de) && (!ate || m.data <= ate));
+    .filter((m) => (!de || m.data >= de) && (!ate || m.data <= ate))
+    .sort(ordenarPorDataHoraComManualNoTopo);
+}
+
+// Mesmo critério de ordenação usado em Movimentações e no Dashboard: sem
+// hora real (Manual/Recorrente) sempre primeiro; entre os do banco, por
+// data+hora de verdade, da mais recente pra mais antiga.
+function ordenarPorDataHoraComManualNoTopo(a, b) {
+  const semHoraA = a.origem === "Manual" || a.origem === "Recorrente";
+  const semHoraB = b.origem === "Manual" || b.origem === "Recorrente";
+  if (semHoraA !== semHoraB) return semHoraA ? -1 : 1;
+  if (semHoraA) {
+    return a.data !== b.data ? (a.data < b.data ? 1 : -1) : tsParaMillis(b.createdAt) - tsParaMillis(a.createdAt);
+  }
+  const dataHoraA = `${a.data} ${a.horaTransacaoReal || "00:00"}`;
+  const dataHoraB = `${b.data} ${b.horaTransacaoReal || "00:00"}`;
+  return dataHoraA !== dataHoraB ? (dataHoraA < dataHoraB ? 1 : -1) : tsParaMillis(b.createdAt) - tsParaMillis(a.createdAt);
 }
 
 // Filtros de Tipo e Banco (dropdowns) recalculam de verdade os gráficos e
@@ -2504,7 +2538,7 @@ function renderTransacoesDash(lista) {
   const body = document.getElementById("dash-transacoes-body");
   body.innerHTML = pagina.length
     ? pagina.map((m) => (
-        `<tr><td>${dataBR(m.data)}</td><td>${esc(m.tituloLista)}</td>` +
+        `<tr><td>${dataBR(m.data)}${m.horaTransacaoReal ? `<span class="sublabel">${esc(m.horaTransacaoReal)}</span>` : ""}</td><td>${esc(m.tituloLista)}</td>` +
         `<td>${esc(m.instituicao || "—")}</td>` +
         `<td><span class="badge-tipo ${m.tipo}">${rotuloTipo(m.tipo)}</span></td>` +
         `<td>${esc(m.categoria)}</td><td class="num">${moeda(m.valor)}</td>` +
