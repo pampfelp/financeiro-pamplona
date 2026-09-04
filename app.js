@@ -669,10 +669,22 @@ document.getElementById("btn-salvar-nova-pessoa").addEventListener("click", asyn
   }
 });
 
+// Conta pendente não pode sumir da tela só porque o filtro de período mudou —
+// senão você troca o mês, ela some, e você esquece de pagar. Todo PENDENTE
+// com vencimento de até 90 dias atrás (ou no futuro) fura o filtro de data e
+// continua aparecendo — e somando no "A pagar" — até ser pago ou excluído.
+// Passou de 90 dias vencido, volta a respeitar o filtro (senão a lista vira
+// um cemitério de coisa velha que nunca vai ser quitada).
+const DIAS_PENDENTE_SEMPRE_VISIVEL = 90;
+
 function filtrarPorData(lista) {
   if (!STATE.filtroMovDataDe && !STATE.filtroMovDataAte) return lista;
+  const limite = new Date();
+  limite.setDate(limite.getDate() - DIAS_PENDENTE_SEMPRE_VISIVEL);
+  const dataLimitePendente = formatarDataISO(limite);
   return lista.filter((m) => {
     const data = String(m.data || "");
+    if (m.pago !== true && data >= dataLimitePendente) return true;
     if (STATE.filtroMovDataDe && data < STATE.filtroMovDataDe) return false;
     if (STATE.filtroMovDataAte && data > STATE.filtroMovDataAte) return false;
     return true;
