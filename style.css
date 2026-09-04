@@ -19,6 +19,17 @@ button,input,select,textarea{font-family:var(--sans);}
 .toast.erro{background:var(--debit-soft);border:1.5px solid var(--debit);color:#7f1d1d;}
 .toast .toast-title{font-weight:800;margin-bottom:3px;font-family:var(--display);font-size:12.5px;text-transform:uppercase;}
 
+/* Banner de instalação do PWA — faixa fixa no topo, some com "beforeinstallprompt"
+   ausente ou depois de dispensada (ver app.js). */
+.install-banner{position:fixed;top:0;left:0;right:0;z-index:920;background:var(--roxo);color:#fff;display:flex;align-items:center;justify-content:center;gap:18px;padding:11px 20px;font-size:13px;box-shadow:0 4px 18px rgba(0,0,0,.15);}
+.install-banner.hidden{display:none;}
+.install-banner-acoes{display:flex;align-items:center;gap:8px;flex:none;}
+.install-banner .btn-primary{background:#fff;color:var(--roxo);padding:7px 16px;font-size:12.5px;}
+.install-banner .btn-primary:hover{background:var(--accent-soft);}
+.btn-fechar-banner{background:none;border:none;color:#fff;opacity:.75;font-size:15px;cursor:pointer;padding:4px 6px;line-height:1;}
+.btn-fechar-banner:hover{opacity:1;}
+@media(max-width:640px){.install-banner{flex-wrap:wrap;text-align:center;}}
+
 .sidebar{width:var(--sidebar-w);flex:none;background:var(--roxo);min-height:100vh;display:flex;flex-direction:column;padding:26px 0;position:sticky;top:0;align-self:flex-start;}
 .sidebar .brandmark{padding:0 22px 22px;border-bottom:1px solid rgba(255,255,255,.09);margin-bottom:14px;}
 .sidebar .brandmark .co-nome{font-family:var(--display);font-size:17px;font-weight:800;color:#fff;}
@@ -124,6 +135,14 @@ tbody tr.linha-clicavel{cursor:pointer;}
 .modal-box{background:var(--panel);border-radius:16px;padding:26px;width:100%;max-width:440px;border:1px solid var(--line);box-shadow:0 20px 50px rgba(0,0,0,.25);}
 .modal-box h2{font-family:var(--display);font-weight:800;font-size:17px;margin-bottom:6px;}
 .modal-box .field{margin-bottom:4px;}
+
+/* Modo visualização do modal (crença: a tela mostra dado, editar é ação
+   explícita) — linhas rótulo/valor somente leitura, sem cara de formulário. */
+.detalhe-lista{margin-top:14px;display:flex;flex-direction:column;}
+.detalhe-linha{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);}
+.detalhe-linha:last-child{border-bottom:none;}
+.detalhe-rotulo{font-size:11.5px;color:var(--ink-soft);font-weight:700;text-transform:uppercase;letter-spacing:.03em;flex-shrink:0;}
+.detalhe-valor{font-size:14.5px;font-weight:600;text-align:right;}
 
 .fab-bar{position:fixed;left:0;right:0;bottom:0;height:64px;display:flex;align-items:center;justify-content:center;background:linear-gradient(to top,rgba(245,247,250,.97) 55%,rgba(245,247,250,0));z-index:150;pointer-events:none;padding-bottom:env(safe-area-inset-bottom);}
 .fab-btn{pointer-events:auto;width:54px;height:54px;border-radius:50%;background:var(--roxo);color:#fff;border:none;font-size:28px;font-weight:400;line-height:1;cursor:pointer;box-shadow:0 8px 22px rgba(27,51,88,.45);display:flex;align-items:center;justify-content:center;transition:transform .15s ease,background .15s ease;}

@@ -103,6 +103,7 @@ td.check-col .celula{padding:8px;}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script type="module">
 import { db } from "./firebase-init.js";
+import { esc } from "./shared.js";
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
@@ -279,11 +280,7 @@ async function salvarCelula(id, campo, textoNovo) {
   }
 }
 
-function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
-  ));
-}
+// esc() vem de shared.js — mesma função usada no app.js, sem duplicar.
 
 function mostrarToast(msg, erro) {
   const el = document.getElementById("toast");

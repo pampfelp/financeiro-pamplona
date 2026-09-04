@@ -1,10 +1,15 @@
-const CACHE_NAME = "finpamplona-v1";
+// Bump CACHE_NAME (v2 → v3...) E os "?v=" abaixo (iguais aos do
+// index.html) toda vez que app.js/style.css mudarem de verdade — os dois
+// precisam subir juntos, senão o service worker guarda uma versão e o
+// index.html pede outra.
+const CACHE_NAME = "finpamplona-v2";
 const CORE_ASSETS = [
   "./",
   "./index.html",
-  "./style.css",
-  "./app.js",
+  "./style.css?v=20260904",
+  "./app.js?v=20260904",
   "./firebase-init.js",
+  "./shared.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",

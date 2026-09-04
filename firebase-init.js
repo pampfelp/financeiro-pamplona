@@ -6,7 +6,9 @@
 // clientId/clientSecret no frontend público. Veja "Conexões Bancárias" no
 // app.js e o README para o passo a passo de implantação do Code.gs.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-import { getFirestore, connectFirestoreEmulator } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+import {
+  initializeFirestore, persistentLocalCache, persistentSingleTabManager, connectFirestoreEmulator
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
 // TROQUE pela config do SEU projeto (Firebase Console > Configurações do
 // projeto > seus apps > app Web > "Config"). Essas chaves são públicas por
@@ -22,7 +24,19 @@ const firebaseConfig = {
 };
 
 export const firebaseApp = initializeApp(firebaseConfig);
-export const db = getFirestore(firebaseApp);
+
+// Persistência offline ligada (padrão do segundo cérebro, ver
+// padroes/dados-e-seguranca.md — "cota do Firestore") — o SDK guarda uma
+// cópia local (IndexedDB) de todo documento que já passou por um
+// onSnapshot. Reabrir o app manda só a diferença desde a última vez, não
+// a coleção inteira de novo — reduz drasticamente as leituras em recargas
+// repetidas na mesma aba/dispositivo (o padrão de uso real do Felipe:
+// mesmo celular, app instalado como PWA). "SingleTabManager" porque o uso
+// é sempre uma aba por vez; se abrir em duas abas ao mesmo tempo, a
+// segunda cai pra memória (sem persistência), sem travar nem dar erro.
+export const db = initializeFirestore(firebaseApp, {
+  localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() })
+});
 
 // Por padrão, sempre conecta no projeto Firestore REAL (mesmo testando
 // local ou pela hospedagem) — assim dá pra testar sem precisar rodar

@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260904">
 <!-- Widget oficial da Pluggy Connect — abre a tela de login do banco dentro
      de um iframe controlado pela Pluggy; este app nunca vê a senha do banco.
      Carregado uma vez aqui; só é inicializado (window.PluggyConnect) quando
@@ -25,6 +25,17 @@
 <script src="https://cdn.pluggy.ai/pluggy-connect/latest/pluggy-connect.js"></script>
 </head>
 <body>
+
+<!-- Banner de instalação do PWA — só aparece se o navegador disparar
+     "beforeinstallprompt" (Chrome/Edge/Android) e o Felipe ainda não tiver
+     dispensado ele antes (guardado no localStorage, ver app.js). -->
+<div class="install-banner hidden" id="install-banner">
+  <span>Instale o Financeiro Pamplona no seu aparelho — acesso rápido, direto da tela inicial.</span>
+  <div class="install-banner-acoes">
+    <button class="btn btn-primary" id="btn-instalar-app">Instalar</button>
+    <button class="btn-fechar-banner" id="btn-dispensar-instalar" title="Dispensar" aria-label="Dispensar">✕</button>
+  </div>
+</div>
 
 <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 <div class="mobile-topbar">
@@ -391,45 +402,67 @@
 <!-- MODAL: editar/excluir movimentação -->
 <div class="modal-overlay" id="modal-editar-mov">
   <div class="modal-box">
-    <h2>Editar movimentação</h2>
     <input type="hidden" id="edit-mov-id">
-    <p class="hint hidden" id="edit-mov-info" style="margin-top:6px;"></p>
-    <div class="field" style="margin-top:14px;">
-      <label>Lançamento</label>
-      <div class="select-add">
-        <div class="combo-wrap">
-          <input type="text" id="edit-mov-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
-          <div class="combo-dropdown" id="dd-edit-mov-lancamento"></div>
+
+    <!-- MODO VISUALIZAÇÃO — o modal sempre abre aqui; editar é uma ação
+         explícita (lápis), não o estado padrão. -->
+    <div id="mov-modo-visualizar">
+      <h2>Movimentação</h2>
+      <p class="hint hidden" id="ver-mov-info" style="margin-top:6px;"></p>
+      <div class="detalhe-lista">
+        <div class="detalhe-linha"><span class="detalhe-rotulo">Lançamento</span><span class="detalhe-valor" id="ver-mov-lancamento"></span></div>
+        <div class="detalhe-linha"><span class="detalhe-rotulo">Data</span><span class="detalhe-valor" id="ver-mov-data"></span></div>
+        <div class="detalhe-linha"><span class="detalhe-rotulo">Valor</span><span class="detalhe-valor" id="ver-mov-valor"></span></div>
+        <div class="detalhe-linha"><span class="detalhe-rotulo">Quem comprou</span><span class="detalhe-valor" id="ver-mov-responsavel"></span></div>
+        <div class="detalhe-linha"><span class="detalhe-rotulo">Situação</span><span class="detalhe-valor" id="ver-mov-situacao"></span></div>
+      </div>
+      <div class="row" style="justify-content:space-between; margin-top:18px;">
+        <button class="btn btn-danger" id="btn-excluir-mov">Excluir</button>
+        <div class="row" style="width:auto;">
+          <button class="btn" id="btn-fechar-visualizar-mov">Fechar</button>
+          <button class="btn btn-primary" id="btn-editar-mov">Editar</button>
         </div>
-        <input type="hidden" id="edit-mov-lancamento">
-        <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-mov-lancamento" title="Cadastrar novo lançamento">+</button>
       </div>
     </div>
-    <div class="field" style="margin-top:10px;">
-      <label>Data</label>
-      <input type="date" id="edit-mov-data">
-    </div>
-    <div class="field" style="margin-top:10px;">
-      <label>Valor (R$)</label>
-      <input type="number" step="0.01" id="edit-mov-valor">
-    </div>
-    <div class="field" style="margin-top:10px;">
-      <label>Quem comprou</label>
-      <div class="select-add">
-        <select id="edit-mov-responsavel"><option value="">— Não informado —</option></select>
-        <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="edit-mov-responsavel" title="Cadastrar nova pessoa">+</button>
+
+    <!-- MODO EDIÇÃO — só aparece depois de clicar em "Editar" de propósito. -->
+    <div id="mov-modo-editar" class="hidden">
+      <h2>Editar movimentação</h2>
+      <p class="hint hidden" id="edit-mov-info" style="margin-top:6px;"></p>
+      <div class="field" style="margin-top:14px;">
+        <label>Lançamento</label>
+        <div class="select-add">
+          <div class="combo-wrap">
+            <input type="text" id="edit-mov-lancamento-busca" autocomplete="off" placeholder="Digite para buscar...">
+            <div class="combo-dropdown" id="dd-edit-mov-lancamento"></div>
+          </div>
+          <input type="hidden" id="edit-mov-lancamento">
+          <button type="button" class="btn-add-inline" data-abrir-novo-lancamento="edit-mov-lancamento" title="Cadastrar novo lançamento">+</button>
+        </div>
       </div>
-    </div>
-    <div class="field" style="margin-top:10px;">
-      <label>Situação</label>
-      <select id="edit-mov-pago">
-        <option value="false">Não pago</option>
-        <option value="true">Pago</option>
-      </select>
-    </div>
-    <div class="row" style="justify-content:space-between; margin-top:18px;">
-      <button class="btn btn-danger" id="btn-excluir-mov">Excluir</button>
-      <div class="row" style="width:auto;">
+      <div class="field" style="margin-top:10px;">
+        <label>Data</label>
+        <input type="date" id="edit-mov-data">
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Valor (R$)</label>
+        <input type="number" step="0.01" id="edit-mov-valor">
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Quem comprou</label>
+        <div class="select-add">
+          <select id="edit-mov-responsavel"><option value="">— Não informado —</option></select>
+          <button type="button" class="btn-add-inline" data-abrir-nova-pessoa="edit-mov-responsavel" title="Cadastrar nova pessoa">+</button>
+        </div>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Situação</label>
+        <select id="edit-mov-pago">
+          <option value="false">Não pago</option>
+          <option value="true">Pago</option>
+        </select>
+      </div>
+      <div class="row" style="justify-content:flex-end; margin-top:18px;">
         <button class="btn" id="btn-cancelar-edicao-mov">Cancelar</button>
         <button class="btn btn-primary" id="btn-salvar-edicao-mov">Salvar alterações</button>
       </div>
@@ -894,7 +927,16 @@
   (file://) para testar, veja o README sobre isso.
 -->
 <script type="module" src="firebase-init.js"></script>
-<script type="module" src="app.js"></script>
+<!-- app.js leva "?v=" que sobe a cada mudança relevante de JS (padrão do
+     segundo cérebro) — sem isso, o navegador/service worker às vezes serve
+     a versão antiga do módulo mesmo depois de recarregar a página (já
+     aconteceu de verdade neste projeto, 27/08/2026). firebase-init.js NÃO
+     leva versão: é importado por URL exata tanto por este script quanto
+     por app.js e planilha.html, e versionar só aqui criaria duas
+     instâncias do módulo (Firebase inicializado duas vezes = erro) a
+     menos que todos os pontos de import fossem trocados juntos sempre —
+     como esse arquivo quase nunca muda, não vale o risco. -->
+<script type="module" src="app.js?v=20260904"></script>
 <script>
   // Registra o service worker — sem isso o navegador não considera o site
   // "instalável" (ícone de instalar some do menu, e o Android não mostra o
@@ -906,6 +948,50 @@
       });
     });
   }
+
+  // Banner de instalação do PWA — o Chrome/Edge/Android dispara esse evento
+  // sozinho quando o site cumpre os requisitos de "instalável" (manifest +
+  // service worker), mas o prompt NATIVO do navegador só aparece quando ELE
+  // decide (às vezes nunca, ou só depois de várias visitas). Aqui a gente
+  // guarda o evento e mostra nosso próprio banner (sempre visível na hora
+  // certa), chamando .prompt() só quando o Felipe clica em "Instalar".
+  (() => {
+    const CHAVE_DISPENSOU = "finpamplona-dispensou-instalar";
+    const banner = document.getElementById("install-banner");
+    let promptPendente = null;
+
+    function guardarDispensa() {
+      try { localStorage.setItem(CHAVE_DISPENSOU, "1"); } catch { /* Safari privado etc — sem problema, só volta a perguntar */ }
+    }
+
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      let jaDispensou = false;
+      try { jaDispensou = localStorage.getItem(CHAVE_DISPENSOU) === "1"; } catch { /* ignora */ }
+      if (jaDispensou) return;
+      promptPendente = e;
+      banner.classList.remove("hidden");
+    });
+
+    document.getElementById("btn-instalar-app").addEventListener("click", async () => {
+      if (!promptPendente) return;
+      banner.classList.add("hidden");
+      promptPendente.prompt();
+      await promptPendente.userChoice;
+      promptPendente = null;
+    });
+
+    document.getElementById("btn-dispensar-instalar").addEventListener("click", () => {
+      banner.classList.add("hidden");
+      guardarDispensa();
+    });
+
+    // Instalou (por esse banner ou por fora) — não faz mais sentido insistir.
+    window.addEventListener("appinstalled", () => {
+      banner.classList.add("hidden");
+      guardarDispensa();
+    });
+  })();
 </script>
 </body>
 </html>

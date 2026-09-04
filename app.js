@@ -11,6 +11,7 @@
 // PLUGGY_PROXY_URL em firebase-init.js e a seção "CONEXÕES BANCÁRIAS" abaixo.
 
 import { db, PLUGGY_PROXY_URL } from "./firebase-init.js";
+import { esc } from "./shared.js";
 import {
   collection, addDoc, updateDoc, deleteDoc, setDoc, doc, increment,
   onSnapshot, query, orderBy, where, getDocs, serverTimestamp, writeBatch
@@ -81,12 +82,8 @@ let selectAlvoNovaPessoa = null;
 let pendingSelecaoPessoa = null; // { selectId, nome }
 
 /* ══════════════ HELPERS ══════════════ */
-
-function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
-  ));
-}
+// esc() vem de shared.js — é usado igual aqui e no planilha.html, então mora
+// num módulo compartilhado em vez de duplicado nos dois arquivos.
 
 function moeda(v) {
   return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -805,10 +802,16 @@ document.getElementById("mov-busca-livre").addEventListener("input", (e) => {
 // do calcularDashboard(): só conta como saída quando o tipo é
 // exatamente "Saida"; qualquer outra coisa (Entrada, ou lançamento
 // excluído) cai do lado de "receber".
-function renderMovKpis(filtradas, totalCartaoAberto) {
+//
+// "listaDoPeriodo" é filtrada só por De/Até (chamador passa o resultado de
+// filtrarPorData, antes de pessoa/banco/tipo/situação/busca) — o KPI
+// sempre mostra o total REAL do período escolhido, não "o que está
+// visível agora" na tabela. Buscar um item específico ou olhar só um
+// banco não pode fazer o cartão de KPI mentir.
+function renderMovKpis(listaDoPeriodo, totalCartaoAberto) {
   let totalPago = 0, qtdPago = 0, totalRecebido = 0, qtdRecebido = 0;
   let totalAPagar = 0, qtdAPagar = 0, totalAReceber = 0, qtdAReceber = 0;
-  filtradas.forEach((m) => {
+  listaDoPeriodo.forEach((m) => {
     // Transferência entre contas não é ganho nem gasto — dinheiro mudando
     // de bolso, fica de fora dessas somas.
     if (m.tipo === "Transferencia") return;
@@ -868,7 +871,14 @@ function renderMovimentacoes() {
 
   preencherFiltroPessoa(semCartao);
   preencherFiltroBanco(semCartao);
-  const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorPago(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(filtrarPorData(semCartao))))))));
+  // KPI mostra o dado REAL do período, não "o que está visível agora" —
+  // só o filtro de período (De/Até, com a exceção do pendente até 90 dias)
+  // entra aqui. Busca livre, pessoa, banco, tipo de conta, revisão, tipo e
+  // situação são formas de RECORTAR a lista pra achar algo, não de mudar
+  // "quanto eu paguei/recebi nesse período" — misturar os dois faria o
+  // cartão de KPI mentir toda vez que alguém só quisesse procurar um item.
+  const paraKpis = filtrarPorData(semCartao);
+  const filtradas = filtrarPorBuscaLivre(filtrarPorTipo(filtrarNaoRevisadas(filtrarPorPago(filtrarPorTipoConta(filtrarPorBanco(filtrarPorPessoa(paraKpis)))))));
 
   const totalPaginasMov = Math.max(1, Math.ceil(filtradas.length / PAGINA_MOV_TAMANHO));
   STATE.paginaMov = Math.min(Math.max(1, STATE.paginaMov), totalPaginasMov);
@@ -952,7 +962,7 @@ function renderMovimentacoes() {
   const btnProxima = document.getElementById("btn-mov-pag-proxima");
   if (btnProxima) btnProxima.addEventListener("click", () => { STATE.paginaMov++; renderMovimentacoes(); });
 
-  renderMovKpis(filtradas, totalCartaoAberto);
+  renderMovKpis(paraKpis, totalCartaoAberto);
 }
 
 // Editar De/Até na mão volta o "Período rápido" pra "Personalizado" — senão
@@ -2789,11 +2799,36 @@ async function alternarPagamento(id, novoPago) {
   }
 }
 
+// Texto do aviso "veio do Open Finance" — usado tanto no modo visualização
+// quanto no modo edição do modal, pra não duplicar a lógica.
+function textoInfoMovimentacao(mov) {
+  if (mov.origem !== "Open Finance") return "";
+  const partes = [mov.previsao === true
+    ? `Previsão de parcela futura (${mov.instituicao || "banco"}) — ainda não aconteceu de verdade`
+    : `Importada do banco ${mov.instituicao || ""}`.trim()];
+  if (mov.descricaoOrigem) partes.push(`descrição${mov.previsao === true ? " estimada" : " original"}: "${mov.descricaoOrigem}"`);
+  if (mov.parcelaAtual) partes.push(`parcela ${mov.parcelaAtual}${mov.parcelaTotal ? "/" + mov.parcelaTotal : ""}`);
+  if (mov.dataTransacaoReal && mov.dataTransacaoReal !== mov.data) partes.push(`comprado em ${dataBR(mov.dataTransacaoReal)}, data aqui é o vencimento da fatura`);
+  if (mov.previsao === true) {
+    partes.push("quando essa parcela realmente cair no banco, o sistema atualiza esta linha sozinho — não precisa apagar.");
+  } else {
+    partes.push(mov.revisado === true ? "já revisada." : "escolha o lançamento certo abaixo pra dizer do que se trata (a próxima transação parecida já entra categorizada sozinha).");
+  }
+  return partes.join(" — ");
+}
+
+// O modal sempre ABRE em modo visualização (dado só-leitura) — "editar" é
+// uma ação explícita via o botão lápis, não o estado padrão (crença: "a
+// tela mostra dado; editar é uma ação explícita"). Já deixamos os campos de
+// edição preenchidos aqui também, pra ficarem prontos na hora se o usuário
+// clicar em Editar.
 function abrirModalMovimentacao(id) {
   const mov = STATE.movimentacoes.find((m) => m.id === id);
   if (!mov) return mostrarToast("Movimentação não encontrada.", true);
   preencherSelectsLancamento();
   preencherSelectsPessoa();
+  const mapaLanc = mapaLancamentos();
+
   document.getElementById("edit-mov-id").value = mov.id;
   definirComboLancamento("edit-mov-lancamento", mov.lancamentoId);
   document.getElementById("edit-mov-data").value = mov.data;
@@ -2801,32 +2836,40 @@ function abrirModalMovimentacao(id) {
   document.getElementById("edit-mov-pago").value = mov.pago ? "true" : "false";
   garantirOpcaoPessoa("edit-mov-responsavel", mov.responsavel || "");
 
+  const texto = textoInfoMovimentacao(mov);
+  const temInfo = mov.origem === "Open Finance";
   const infoEl = document.getElementById("edit-mov-info");
-  if (mov.origem === "Open Finance") {
-    const partes = [mov.previsao === true
-      ? `Previsão de parcela futura (${mov.instituicao || "banco"}) — ainda não aconteceu de verdade`
-      : `Importada do banco ${mov.instituicao || ""}`.trim()];
-    if (mov.descricaoOrigem) partes.push(`descrição${mov.previsao === true ? " estimada" : " original"}: "${mov.descricaoOrigem}"`);
-    if (mov.parcelaAtual) partes.push(`parcela ${mov.parcelaAtual}${mov.parcelaTotal ? "/" + mov.parcelaTotal : ""}`);
-    if (mov.dataTransacaoReal && mov.dataTransacaoReal !== mov.data) partes.push(`comprado em ${dataBR(mov.dataTransacaoReal)}, data aqui é o vencimento da fatura`);
-    if (mov.previsao === true) {
-      partes.push("quando essa parcela realmente cair no banco, o sistema atualiza esta linha sozinho — não precisa apagar.");
-    } else {
-      partes.push(mov.revisado === true ? "já revisada." : "escolha o lançamento certo abaixo pra dizer do que se trata (a próxima transação parecida já entra categorizada sozinha).");
-    }
-    infoEl.textContent = partes.join(" — ");
-    infoEl.classList.remove("hidden");
-  } else {
-    infoEl.textContent = "";
-    infoEl.classList.add("hidden");
-  }
+  infoEl.textContent = texto;
+  infoEl.classList.toggle("hidden", !temInfo);
 
+  document.getElementById("ver-mov-lancamento").textContent = mapaLanc[mov.lancamentoId] ? rotuloLancamento(mapaLanc[mov.lancamentoId]) : "(excluído)";
+  document.getElementById("ver-mov-data").textContent = dataBR(mov.data);
+  document.getElementById("ver-mov-valor").textContent = moeda(mov.valor);
+  document.getElementById("ver-mov-responsavel").textContent = mov.responsavel || "— Não informado —";
+  document.getElementById("ver-mov-situacao").textContent = mov.pago ? "Pago" : "Não pago";
+  const verInfoEl = document.getElementById("ver-mov-info");
+  verInfoEl.textContent = texto;
+  verInfoEl.classList.toggle("hidden", !temInfo);
+
+  document.getElementById("mov-modo-visualizar").classList.remove("hidden");
+  document.getElementById("mov-modo-editar").classList.add("hidden");
   document.getElementById("modal-editar-mov").classList.add("active");
+}
+function entrarModoEdicaoMov() {
+  document.getElementById("mov-modo-visualizar").classList.add("hidden");
+  document.getElementById("mov-modo-editar").classList.remove("hidden");
 }
 function fecharModalMovimentacao() {
   document.getElementById("modal-editar-mov").classList.remove("active");
 }
-document.getElementById("btn-cancelar-edicao-mov").addEventListener("click", fecharModalMovimentacao);
+document.getElementById("btn-editar-mov").addEventListener("click", entrarModoEdicaoMov);
+document.getElementById("btn-fechar-visualizar-mov").addEventListener("click", fecharModalMovimentacao);
+document.getElementById("btn-cancelar-edicao-mov").addEventListener("click", () => {
+  // Volta pro modo visualização em vez de fechar o modal — reabre com os
+  // dados originais do Firestore, descartando com segurança qualquer edição
+  // não salva (evita ficar com campo "meio editado" se reabrir de novo).
+  abrirModalMovimentacao(document.getElementById("edit-mov-id").value);
+});
 document.getElementById("modal-editar-mov").addEventListener("click", (e) => {
   if (e.target.id === "modal-editar-mov") fecharModalMovimentacao();
 });
@@ -2871,6 +2914,15 @@ document.getElementById("btn-salvar-edicao-mov").addEventListener("click", async
     dadosAtualizar.revisado = true;
   }
 
+  // Escrita otimista (crença #11): fecha o modal e avisa sucesso NA HORA —
+  // não espera o Firestore confirmar com o servidor. A lista se atualiza
+  // sozinha via onSnapshot assim que a escrita entra no cache local (que é
+  // imediato, bem antes da rodada de rede terminar). Só volta com um toast
+  // de erro se a escrita realmente falhar — não trava a tela por causa de
+  // uma internet lenta pra uma edição que quase nunca dá errado.
+  mostrarToast(`Movimentação atualizada (${alteracoes.length} campo(s) alterado(s)).`);
+  fecharModalMovimentacao();
+
   try {
     await updateDoc(doc(db, "movimentacoes", id), dadosAtualizar);
     for (const a of alteracoes) {
@@ -2887,8 +2939,6 @@ document.getElementById("btn-salvar-edicao-mov").addEventListener("click", async
     if (atual.origem === "Open Finance" && atual.chaveCategorizador && atual.lancamentoId !== lancamentoId) {
       await garantirRegraCategorizacao(atual.chaveCategorizador, lancamentoId, atual.descricaoOrigem, valor);
     }
-    mostrarToast(`Movimentação atualizada (${alteracoes.length} campo(s) alterado(s)).`);
-    fecharModalMovimentacao();
   } catch (err) {
     mostrarToast("Não foi possível salvar: " + err.message, true);
   }
@@ -2902,14 +2952,18 @@ document.getElementById("btn-excluir-mov").addEventListener("click", async () =>
   const mapaLanc = mapaLancamentos();
   const nomeLanc = (mapaLanc[atual.lancamentoId] || {}).nome || "(excluído)";
   const resumo = `${dataBR(atual.data)} — ${moeda(atual.valor)}`;
+
+  // Escrita otimista (crença #11): mesma lógica do salvar — avisa e fecha
+  // na hora, sem esperar o Firestore confirmar a exclusão com o servidor.
+  mostrarToast("Movimentação excluída.");
+  fecharModalMovimentacao();
+
   try {
     await addDoc(collection(db, "historico"), {
       lancamentoId: atual.lancamentoId, nomeLancamento: nomeLanc, campo: "Movimentação",
       valorAnterior: resumo, valorNovo: "(excluída)", tipoAlteracao: "Exclusão", dataHora: serverTimestamp()
     });
     await deleteDoc(doc(db, "movimentacoes", id));
-    mostrarToast("Movimentação excluída.");
-    fecharModalMovimentacao();
   } catch (err) {
     mostrarToast("Não foi possível excluir: " + err.message, true);
   }
