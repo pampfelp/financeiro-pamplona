@@ -281,6 +281,15 @@
         <tbody id="parcelas-cartao-body"><tr><td colspan="6" class="empty">Carregando…</td></tr></tbody>
       </table>
     </div>
+
+    <div class="card">
+      <h2>Pagamentos de fatura (dinheiro que saiu da conta)</h2>
+      <p class="hint" style="margin-top:0;">Movimentações com categoria <strong>"Débito Fatura"</strong> ou <strong>"Saldo de Fatura"</strong> — o Pix/débito que você faz pra quitar a fatura. Elas <strong>não aparecem em Movimentações de propósito</strong>: as compras do cartão já foram contadas uma vez lá, e contar o pagamento da fatura também somaria o mesmo gasto duas vezes. Clique numa linha para corrigir ou excluir.</p>
+      <table>
+        <thead><tr><th>Data</th><th>Lançamento</th><th>Origem</th><th>Quem pagou</th><th>Valor</th><th>Situação</th></tr></thead>
+        <tbody id="pagamentos-fatura-body"><tr><td colspan="6" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- CONEXÕES BANCÁRIAS -->
@@ -936,7 +945,7 @@
      instâncias do módulo (Firebase inicializado duas vezes = erro) a
      menos que todos os pontos de import fossem trocados juntos sempre —
      como esse arquivo quase nunca muda, não vale o risco. -->
-<script type="module" src="app.js?v=20260904"></script>
+<script type="module" src="app.js?v=20260905"></script>
 <script>
   // Registra o service worker — sem isso o navegador não considera o site
   // "instalável" (ícone de instalar some do menu, e o Android não mostra o

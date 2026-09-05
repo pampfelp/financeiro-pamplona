@@ -378,6 +378,7 @@ function renderAll() {
   renderCartoes();
   renderComprasParceladas();
   renderParcelasCartao();
+  renderPagamentosFatura();
   renderRecorrentes();
   renderHistorico();
   renderDashboard();
@@ -1150,7 +1151,11 @@ function renderParcelasCartao() {
   // sincronizado do banco): não tem cartaoId, é identificado por
   // contaTipo "cartao" + conexaoId. As duas formas aparecem juntas aqui,
   // pra dar visão completa do que está ocupando o limite de cada cartão.
-  const parcelas = STATE.movimentacoes.filter((m) => m.cartaoId || (m.contaTipo === "cartao" && m.conexaoId));
+  // Sem exigir "conexaoId" junto do contaTipo: um registro de cartão que
+  // perdeu (ou nunca teve) a conexão continua sendo um gasto de cartão e
+  // precisa aparecer em algum lugar — exigir os dois já foi motivo de
+  // movimentação sumir de todas as telas (ver renderPagamentosFatura).
+  const parcelas = STATE.movimentacoes.filter((m) => m.cartaoId || m.contaTipo === "cartao");
   if (!parcelas.length) {
     body.innerHTML = '<tr><td colspan="6" class="empty">Nenhum gasto lançado no cartão ainda.</td></tr>';
     return;
@@ -1168,6 +1173,49 @@ function renderParcelasCartao() {
       `<td><span class="stamp ${m.pago ? "pago" : "pendente"}" data-alternar-pagamento="${m.id}" data-novo-pago="${!m.pago}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
     );
   }).join("");
+  body.querySelectorAll("[data-abrir-mov]").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("[data-alternar-pagamento]")) return;
+      abrirModalMovimentacao(tr.dataset.abrirMov);
+    });
+  });
+  body.querySelectorAll("[data-alternar-pagamento]").forEach((stamp) => {
+    stamp.addEventListener("click", (e) => {
+      e.stopPropagation();
+      alternarPagamento(stamp.dataset.alternarPagamento, stamp.dataset.novoPago === "true");
+    });
+  });
+}
+
+// Pagamento de fatura (categoria "Débito Fatura"/"Saldo de Fatura" numa
+// movimentação de CONTA, não de cartão): fica fora de Movimentações de
+// propósito, senão o mesmo gasto seria contado duas vezes — uma na compra do
+// cartão, outra no Pix que quita a fatura. Só que "fora de Movimentações"
+// virou "fora de TODAS as telas": até 05/09/2026 esses registros eram
+// gravados, entravam no saldo, e não apareciam em lugar nenhum — não dava
+// pra ver, corrigir nem excluir. Esta tabela é onde eles moram agora.
+function renderPagamentosFatura() {
+  const body = document.getElementById("pagamentos-fatura-body");
+  if (!body) return;
+  const mapaLanc = mapaLancamentos();
+  const conexoesAtivas = conexoesAtivasParaPessoal();
+  const pagamentos = STATE.movimentacoes
+    .filter((m) => movimentacaoVisivel(m, conexoesAtivas))
+    .map((m) => ({ ...m, categoria: (mapaLanc[m.lancamentoId] || {}).categoria || "", nomeLancamento: (mapaLanc[m.lancamentoId] || {}).nome || "(excluído)" }))
+    // Só as de conta: as que têm cartão de verdade já aparecem na tabela de
+    // parcelas acima, não podem sair duplicadas aqui.
+    .filter((m) => CATEGORIAS_FATURA_CARTAO.includes(m.categoria) && !m.cartaoId && m.contaTipo !== "cartao");
+
+  if (!pagamentos.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">Nenhum pagamento de fatura lançado ainda.</td></tr>';
+    return;
+  }
+  const ordenados = [...pagamentos].sort((a, b) => (a.data < b.data ? 1 : -1));
+  body.innerHTML = ordenados.map((m) => (
+    `<tr class="linha-clicavel" data-abrir-mov="${m.id}"><td>${dataBR(m.data)}</td><td>${esc(m.nomeLancamento)}</td>` +
+    `<td>${esc(m.origem || "Manual")}</td><td>${esc(m.responsavel || "")}</td><td class="num">${moeda(m.valor)}</td>` +
+    `<td><span class="stamp ${m.pago ? "pago" : "pendente"}" data-alternar-pagamento="${m.id}" data-novo-pago="${!m.pago}">${m.pago ? "PAGO" : "PENDENTE"}</span></td></tr>`
+  )).join("");
   body.querySelectorAll("[data-abrir-mov]").forEach((tr) => {
     tr.addEventListener("click", (e) => {
       if (e.target.closest("[data-alternar-pagamento]")) return;
@@ -2774,6 +2822,17 @@ document.getElementById("btn-salvar-edicao-lanc").addEventListener("click", asyn
 
 // Lógica central de criar movimentação — usada tanto pelo formulário da
 // aba Movimentações quanto pelo modal de Ação Rápida.
+// Uma movimentação com categoria de fatura não aparece em Movimentações (ia
+// contar o mesmo gasto duas vezes) — ela vive na aba Cartão de Crédito. Quem
+// salva PRECISA ser avisado disso na hora, senão parece que o app engoliu o
+// lançamento: foi exatamente o que aconteceu até 05/09/2026, quando 12
+// registros ficaram invisíveis em todas as telas sem ninguém entender por quê.
+function avisoDestinoFatura(lancamentoId) {
+  const l = mapaLancamentos()[lancamentoId];
+  if (!l || !CATEGORIAS_FATURA_CARTAO.includes(l.categoria)) return "";
+  return ` Como a categoria é "${l.categoria}", ela aparece na aba Cartão de Crédito (em "Pagamentos de fatura"), não em Movimentações — assim o gasto do cartão não é contado duas vezes.`;
+}
+
 async function criarMovimentacao({ lancamentoId, data, valor, pago, responsavel }) {
   if (!lancamentoId) { mostrarToast("Cadastre um lançamento primeiro.", true); return false; }
   if (!data || !valor) { mostrarToast("Preencha data e valor.", true); return false; }
@@ -2781,7 +2840,7 @@ async function criarMovimentacao({ lancamentoId, data, valor, pago, responsavel 
     await addDoc(collection(db, "movimentacoes"), {
       lancamentoId, data, valor, pago, responsavel, origem: "Manual", cartaoId: null, compraParceladaId: null, createdAt: serverTimestamp()
     });
-    mostrarToast("Movimentação adicionada!");
+    mostrarToast("Movimentação adicionada!" + avisoDestinoFatura(lancamentoId));
     return true;
   } catch (err) {
     mostrarToast("Não foi possível salvar: " + err.message, true);
@@ -3185,7 +3244,9 @@ async function criarRecorrente({ lancamentoId, valor, dataInicio, diaVencimento,
   if (!valor || !dataInicio || !diaVencimento) { mostrarToast("Preencha valor, data de início e dia de vencimento.", true); return false; }
   try {
     await addDoc(collection(db, "recorrentes"), { lancamentoId, valor, dataInicio, diaVencimento, ativo, ultimoMesLancado: "", createdAt: serverTimestamp() });
-    mostrarToast("Custo recorrente cadastrado!");
+    // Mesmo aviso da criação avulsa: um recorrente de categoria de fatura vai
+    // gerar, todo mês, movimentação que não aparece em Movimentações.
+    mostrarToast("Custo recorrente cadastrado!" + avisoDestinoFatura(lancamentoId));
     return true;
   } catch (err) {
     mostrarToast("Não foi possível salvar: " + err.message, true);
@@ -3563,6 +3624,12 @@ function iniciarListeners() {
     renderConexoes();
     renderMovimentacoes();
     renderDashboard();
+    // Precisa entrar aqui junto com as outras: esta tabela também filtra por
+    // movimentacaoVisivel(), e as conexões costumam carregar DEPOIS das
+    // movimentações. Sem esta linha, ela renderizava uma vez com
+    // "conexoesBancarias" ainda vazio e escondia pra sempre todo pagamento de
+    // fatura vindo do Open Finance — 3 dos 12 registros no teste de 05/09.
+    renderPagamentosFatura();
     // Sincroniza cada conexão automaticamente uma vez por sessão (assim que
     // o app abre), sem precisar clicar em "Sincronizar agora" — a guarda
     // por Set evita loop, já que a própria sincronização reescreve o

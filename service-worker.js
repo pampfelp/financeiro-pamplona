@@ -2,12 +2,12 @@
 // index.html) toda vez que app.js/style.css mudarem de verdade — os dois
 // precisam subir juntos, senão o service worker guarda uma versão e o
 // index.html pede outra.
-const CACHE_NAME = "finpamplona-v2";
+const CACHE_NAME = "finpamplona-v3";
 const CORE_ASSETS = [
   "./",
   "./index.html",
   "./style.css?v=20260904",
-  "./app.js?v=20260904",
+  "./app.js?v=20260905",
   "./firebase-init.js",
   "./shared.js",
   "./manifest.json",
